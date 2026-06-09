@@ -34,3 +34,27 @@ export function parseInterval(value: string): Interval {
 export function getFixedIntervalMs(interval: Interval): number | null {
   return fixedIntervalMs[interval] ?? null;
 }
+
+export function alignTimestampToIntervalOpenTime(timestamp: number, interval: Interval): number {
+  if (interval === '1w') {
+    const date = new Date(timestamp);
+    const day = date.getUTCDay();
+    const daysSinceMonday = day === 0 ? 6 : day - 1;
+
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - daysSinceMonday);
+  }
+
+  const fixedDuration = getFixedIntervalMs(interval);
+
+  if (fixedDuration) {
+    return Math.floor(timestamp / fixedDuration) * fixedDuration;
+  }
+
+  const date = new Date(timestamp);
+
+  if (interval === '1M') {
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  }
+
+  return timestamp;
+}

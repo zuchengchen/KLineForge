@@ -160,8 +160,8 @@ export function KLineChartHost({
       return;
     }
 
-    return attachCrosshairSync(chart, chartId, lastEmittedCrosshairTimestampRef);
-  }, [chartId]);
+    return attachCrosshairSync(chart, chartId, interval, lastEmittedCrosshairTimestampRef);
+  }, [chartId, interval]);
 
   useChartIndicators({ chartId, chartRef, indicatorRevision, interval, market, symbol });
 

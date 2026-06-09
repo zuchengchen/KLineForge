@@ -1,9 +1,11 @@
 import type { Chart, Crosshair } from 'klinecharts';
 import type { MutableRefObject } from 'react';
-import type { ChartId } from '../../types/domain';
+import type { ChartId, Interval } from '../../types/domain';
+import { alignTimestampToIntervalOpenTime } from '../market-data/intervals';
 
 interface CrosshairSyncEvent {
   chartId: ChartId;
+  interval: Interval;
   timestamp: number;
 }
 
@@ -13,9 +15,16 @@ const crosshairSyncEventName = 'klineforge:crosshair-sync';
 export function attachCrosshairSync(
   chart: Chart,
   chartId: ChartId,
+  interval: Interval,
   lastEmittedTimestampRef: MutableRefObject<number | null>,
 ): () => void {
+  let applyingSyncedCrosshair = false;
+
   const emitCrosshair = (data?: unknown) => {
+    if (applyingSyncedCrosshair) {
+      return;
+    }
+
     const timestamp = (data as Crosshair | undefined)?.timestamp;
 
     if (typeof timestamp !== 'number' || timestamp === lastEmittedTimestampRef.current) {
@@ -25,7 +34,7 @@ export function attachCrosshairSync(
     lastEmittedTimestampRef.current = timestamp;
     crosshairSyncTarget.dispatchEvent(
       new CustomEvent<CrosshairSyncEvent>(crosshairSyncEventName, {
-        detail: { chartId, timestamp },
+        detail: { chartId, interval, timestamp },
       }),
     );
   };
@@ -37,10 +46,16 @@ export function attachCrosshairSync(
       return;
     }
 
-    const point = chart.convertToPixel({ timestamp: detail.timestamp });
+    const targetTimestamp = alignTimestampToIntervalOpenTime(detail.timestamp, interval);
+    const point = chart.convertToPixel({ timestamp: targetTimestamp });
 
     if ('x' in point && typeof point.x === 'number') {
-      chart.executeAction('onCrosshairChange', { x: point.x });
+      applyingSyncedCrosshair = true;
+      try {
+        chart.executeAction('onCrosshairChange', { x: point.x });
+      } finally {
+        applyingSyncedCrosshair = false;
+      }
     }
   };
 
@@ -52,4 +67,3 @@ export function attachCrosshairSync(
     crosshairSyncTarget.removeEventListener(crosshairSyncEventName, applyCrosshair);
   };
 }
-
