@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "app": "KLineForge",
+  "exportedAt": "2026-06-09T15:28:56.814Z",
+  "data": {
+    "settings": {
+      "schemaVersion": 1,
+      "theme": "dark",
+      "language": "en-US",
+      "priceColorMode": "green-up-red-down",
+      "chartStyle": "candle",
+      "showGrid": true,
+      "showLastPriceLine": true,
+      "showCrosshair": true,
+      "updatedAt": 1781018872228
+    },
+    "lastSession": {
+      "schemaVersion": 1,
+      "market": "usdM",
+      "symbol": "BTCUSDT",
+      "leftInterval": "5m",
+      "rightInterval": "1h",
+      "activeChartId": "left",
+      "fullscreenChartId": null,
+      "sidebarCollapsed": false,
+      "updatedAt": 1781018872228
+    },
+    "watchlists": [
+      {
+        "schemaVersion": 1,
+        "market": "usdM",
+        "symbol": "BTCUSDT",
+        "sortOrder": 0,
+        "createdAt": 1781018872525,
+        "updatedAt": 1781018872525
+      }
+    ],
+    "drawings": [],
+    "indicatorConfigs": [
+      {
+        "id": "usdM:BTCUSDT:left:5m:MA",
+        "schemaVersion": 1,
+        "market": "usdM",
+        "symbol": "BTCUSDT",
+        "chartId": "left",
+        "interval": "5m",
+        "name": "MA",
+        "pane": "main",
+        "visible": true,
+        "calcParams": [
+          5,
+          10,
+          30,
+          60
+        ],
+        "color": "#f5b84b",
+        "lineWidth": 1,
+        "createdAt": 1781018872509,
+        "updatedAt": 1781018872509
+      },
+      {
+        "id": "usdM:BTCUSDT:left:5m:VOL",
+        "schemaVersion": 1,
+        "market": "usdM",
+        "symbol": "BTCUSDT",
+        "chartId": "left",
+        "interval": "5m",
+        "name": "VOL",
+        "pane": "sub",
+        "visible": true,
+        "calcParams": [
+          5,
+          10,
+          20
+        ],
+        "color": "#9ba8ba",
+        "lineWidth": 1,
+        "createdAt": 1781018872509,
+        "updatedAt": 1781018872509
+      },
+      {
+        "id": "usdM:BTCUSDT:right:1h:MA",
+        "schemaVersion": 1,
+        "market": "usdM",
+        "symbol": "BTCUSDT",
+        "chartId": "right",
+        "interval": "1h",
+        "name": "MA",
+        "pane": "main",
+        "visible": true,
+        "calcParams": [
+          5,
+          10,
+          30,
+          60
+        ],
+        "color": "#f5b84b",
+        "lineWidth": 1,
+        "createdAt": 1781018872510,
+        "updatedAt": 1781018872510
+      },
+      {
+        "id": "usdM:BTCUSDT:right:1h:VOL",
+        "schemaVersion": 1,
+        "market": "usdM",
+        "symbol": "BTCUSDT",
+        "chartId": "right",
+        "interval": "1h",
+        "name": "VOL",
+        "pane": "sub",
+        "visible": true,
+        "calcParams": [
+          5,
+          10,
+          20
+        ],
+        "color": "#9ba8ba",
+        "lineWidth": 1,
+        "createdAt": 1781018872510,
+        "updatedAt": 1781018872510
+      }
+    ]
+  }
+}

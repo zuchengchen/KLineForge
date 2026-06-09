@@ -1,0 +1,187 @@
+.kline-chart-host {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.kline-chart-host__canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+}
+
+.kline-chart-host__actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 6;
+}
+
+.kline-chart-host__actions button {
+  min-width: 42px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(132, 150, 176, 0.22);
+  background: rgba(13, 17, 23, 0.82);
+  font-size: 12px;
+}
+
+:root[data-theme='light'] .kline-chart-host__actions button {
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.kline-chart-host__status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #9ba8ba;
+  background: rgba(13, 17, 23, 0.7);
+  pointer-events: none;
+}
+
+:root[data-theme='light'] .kline-chart-host__status {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.kline-chart-host__source {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  padding: 2px 6px;
+  border: 1px solid rgba(132, 150, 176, 0.22);
+  border-radius: 4px;
+  color: #9ba8ba;
+  background: rgba(13, 17, 23, 0.72);
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+:root[data-theme='light'] .kline-chart-host__source {
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.kline-chart-host__connection {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  padding: 2px 6px;
+  border: 1px solid rgba(132, 150, 176, 0.22);
+  border-radius: 4px;
+  color: #9ba8ba;
+  background: rgba(13, 17, 23, 0.72);
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.kline-chart-host__connection--connected {
+  color: #16c784;
+}
+
+.kline-chart-host__connection--error,
+.kline-chart-host__connection--offline {
+  color: #ea3943;
+}
+
+.kline-chart-host__connection--connecting,
+.kline-chart-host__connection--reconnecting {
+  color: #f5b84b;
+}
+
+:root[data-theme='light'] .kline-chart-host__connection {
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.drawing-tools {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.drawing-tools__buttons,
+.drawing-tools__panel {
+  border: 1px solid rgba(132, 150, 176, 0.22);
+  background: rgba(13, 17, 23, 0.82);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+:root[data-theme='light'] .drawing-tools__buttons,
+:root[data-theme='light'] .drawing-tools__panel {
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.drawing-tools__buttons {
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+}
+
+.drawing-tools__buttons button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.drawing-tools__buttons .drawing-tools__button--active {
+  border-color: #2f81f7;
+  color: #ffffff;
+  background: rgba(47, 129, 247, 0.72);
+}
+
+.drawing-tools__panel {
+  display: grid;
+  gap: 7px;
+  width: 166px;
+  padding: 8px;
+}
+
+.drawing-tools__panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.drawing-tools__panel header span,
+.drawing-tools__panel label {
+  color: #9ba8ba;
+  font-size: 11px;
+}
+
+.drawing-tools__panel label {
+  display: grid;
+  gap: 4px;
+}
+
+.drawing-tools__panel input,
+.drawing-tools__panel select {
+  min-height: 26px;
+  min-width: 0;
+}
+
+.drawing-tools__actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.drawing-tools__actions button {
+  min-height: 28px;
+  padding: 0 5px;
+  font-size: 11px;
+}
