@@ -1,6 +1,14 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { supportedIntervals, type ChartId, type Interval } from '../../types/domain';
+import {
+  chartLayoutI18nKeys,
+  chartLayoutModes,
+  chartNameI18nKeys,
+  getChartNumber,
+  getSessionChartInterval,
+  getVisibleChartIds,
+} from '../../types/chartLayout';
+import { supportedIntervals, type ChartId, type ChartLayout, type Interval } from '../../types/domain';
 import { useSessionStore } from '../../app/stores/sessionStore';
 import { KLineChartHost } from '../../features/chart/KLineChartHost';
 import { getChartExportHandle } from '../../features/chart/chartExportRegistry';
@@ -53,8 +61,8 @@ function ChartPane({ chartId }: { chartId: ChartId }) {
   const setActiveChart = useSessionStore((state) => state.setActiveChart);
   const setFullscreenChart = useSessionStore((state) => state.setFullscreenChart);
   const setInterval = useSessionStore((state) => state.setInterval);
-  const interval = chartId === 'left' ? session.leftInterval : session.rightInterval;
-  const title = chartId === 'left' ? t('leftChart') : t('rightChart');
+  const interval = getSessionChartInterval(session, chartId);
+  const title = t(chartNameI18nKeys[chartId]);
   const isFullscreen = session.fullscreenChartId === chartId;
   const exportPng = () => {
     const handle = getChartExportHandle(chartId);
@@ -69,6 +77,8 @@ function ChartPane({ chartId }: { chartId: ChartId }) {
   return (
     <section
       className={`chart-pane ${session.activeChartId === chartId ? 'chart-pane--active' : ''}`}
+      aria-label={title}
+      data-chart-id={chartId}
       onClick={() => setActiveChart(chartId)}
     >
       <header className="chart-pane__header">
@@ -119,6 +129,38 @@ function ChartPane({ chartId }: { chartId: ChartId }) {
         </Suspense>
       )}
     </section>
+  );
+}
+
+function ChartLayoutControl({
+  chartLayout,
+  compact = false,
+  onChange,
+}: {
+  chartLayout: ChartLayout;
+  compact?: boolean;
+  onChange: (chartLayout: ChartLayout) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div
+      className={compact ? 'chart-layout-control chart-layout-control--compact' : 'chart-layout-control'}
+      aria-label={compact ? t('chartLayoutQuickSwitch') : t('chartLayout')}
+    >
+      {chartLayoutModes.map((layout) => (
+        <button
+          key={layout}
+          type="button"
+          className={layout === chartLayout ? 'chart-layout-control__button chart-layout-control__button--active' : 'chart-layout-control__button'}
+          aria-label={t(chartLayoutI18nKeys[layout])}
+          aria-pressed={layout === chartLayout}
+          onClick={() => onChange(layout)}
+        >
+          {layout}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -200,6 +242,17 @@ export function AppShell() {
   const setShowLastPriceLine = useSessionStore((state) => state.setShowLastPriceLine);
   const setFullscreenChart = useSessionStore((state) => state.setFullscreenChart);
   const setSidebarCollapsed = useSessionStore((state) => state.setSidebarCollapsed);
+  const setChartLayout = useSessionStore((state) => state.setChartLayout);
+  const visibleChartIds = useMemo(() => getVisibleChartIds(session.chartLayout), [session.chartLayout]);
+  const renderedChartIds = session.fullscreenChartId ? [session.fullscreenChartId] : visibleChartIds;
+  const visibleIntervals = useMemo(
+    () => visibleChartIds.map((chartId) => session.chartIntervals[chartId]),
+    [session.chartIntervals, visibleChartIds],
+  );
+  const visibleIntervalKey = visibleIntervals.join('|');
+  const marketBarIntervals = visibleChartIds
+    .map((chartId) => `${getChartNumber(chartId)}:${session.chartIntervals[chartId]}`)
+    .join(' / ');
 
   useEffect(() => {
     let active = true;
@@ -248,10 +301,10 @@ export function AppShell() {
       return;
     }
 
-    void ensureCacheTasksForSymbol(session.market, session.symbol, [session.leftInterval, session.rightInterval]).then(() =>
+    void ensureCacheTasksForSymbol(session.market, session.symbol, visibleIntervals).then(() =>
       cacheQueueRunner.start(),
     );
-  }, [hydrated, session.leftInterval, session.market, session.rightInterval, session.symbol]);
+  }, [hydrated, session.market, session.symbol, visibleIntervalKey, visibleIntervals]);
 
   useEffect(() => {
     let active = true;
@@ -443,8 +496,8 @@ export function AppShell() {
               <ExportPanel
                 market={session.market}
                 symbol={session.symbol}
-                leftInterval={session.leftInterval}
-                rightInterval={session.rightInterval}
+                chartIntervals={session.chartIntervals}
+                visibleChartIds={renderedChartIds}
               />
             </Suspense>
             <button className="sidebar__settings-button" type="button" onClick={() => setSettingsOpen(true)}>
@@ -497,23 +550,24 @@ export function AppShell() {
           </div>
           <div className="market-bar__meta">
             <span>{session.market === 'usdM' ? 'USD-M Futures' : 'Spot'}</span>
-            <span>
-              {session.leftInterval} / {session.rightInterval}
-            </span>
+            <span>{marketBarIntervals}</span>
+            <ChartLayoutControl compact chartLayout={session.chartLayout} onChange={setChartLayout} />
           </div>
         </header>
         {activeView === 'chart' ? (
-          <div className={`chart-grid ${session.fullscreenChartId ? 'chart-grid--fullscreen' : ''}`}>
-            {(!session.fullscreenChartId || session.fullscreenChartId === 'left') && <ChartPane chartId="left" />}
-            {(!session.fullscreenChartId || session.fullscreenChartId === 'right') && <ChartPane chartId="right" />}
+          <div
+            className={`chart-grid chart-grid--layout-${session.chartLayout} ${session.fullscreenChartId ? 'chart-grid--fullscreen' : ''}`}
+          >
+            {renderedChartIds.map((chartId) => (
+              <ChartPane key={chartId} chartId={chartId} />
+            ))}
           </div>
         ) : (
           <Suspense fallback={<div className="workspace__loading">{t('loadingCache')}</div>}>
             <CacheManagementPage
               market={session.market}
               symbol={session.symbol}
-              leftInterval={session.leftInterval}
-              rightInterval={session.rightInterval}
+              intervals={visibleIntervals}
             />
           </Suspense>
         )}
@@ -560,6 +614,19 @@ export function AppShell() {
               >
                 <option value="green-up-red-down">Green up / Red down</option>
                 <option value="red-up-green-down">Red up / Green down</option>
+              </select>
+            </label>
+            <label>
+              {t('chartLayout')}
+              <select
+                value={session.chartLayout}
+                onChange={(event) => setChartLayout(Number(event.target.value) as ChartLayout)}
+              >
+                {chartLayoutModes.map((layout) => (
+                  <option key={layout} value={layout}>
+                    {t(chartLayoutI18nKeys[layout])}
+                  </option>
+                ))}
               </select>
             </label>
             <label>

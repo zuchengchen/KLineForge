@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import { createDefaultSession, createDefaultSettings } from '../defaults';
+import {
+  normalizeActiveChartId,
+  normalizeChartLayout,
+  normalizeFullscreenChartId,
+} from '../../types/chartLayout';
+import { normalizeSessionState } from '../sessionState';
 import type {
+  ChartLayout,
   ChartId,
   ChartSettings,
   Interval,
@@ -15,7 +22,8 @@ interface SessionStore {
   session: LastSessionState;
   settings: ChartSettings;
   hydrated: boolean;
-  hydrate: (session: LastSessionState | null, settings: ChartSettings | null) => void;
+  hydrate: (session: Partial<LastSessionState> | null, settings: ChartSettings | null) => void;
+  setChartLayout: (chartLayout: ChartLayout) => void;
   setMarket: (market: MarketType) => void;
   setSymbol: (symbol: string) => void;
   setInterval: (chartId: ChartId, interval: Interval) => void;
@@ -48,10 +56,23 @@ export const useSessionStore = create<SessionStore>((set) => ({
   hydrated: false,
   hydrate: (session, settings) =>
     set((state) => ({
-      session: session ? { ...state.session, ...session } : state.session,
+      session: normalizeSessionState(session, state.session),
       settings: settings ? { ...state.settings, ...settings } : state.settings,
       hydrated: true,
     })),
+  setChartLayout: (chartLayout) =>
+    set((state) => {
+      const normalizedChartLayout = normalizeChartLayout(chartLayout, state.session.chartLayout);
+
+      return {
+        session: touchSession({
+          ...state.session,
+          chartLayout: normalizedChartLayout,
+          activeChartId: normalizeActiveChartId(state.session.activeChartId, normalizedChartLayout),
+          fullscreenChartId: normalizeFullscreenChartId(state.session.fullscreenChartId, normalizedChartLayout),
+        }),
+      };
+    }),
   setMarket: (market) =>
     set((state) => ({
       session: touchSession({ ...state.session, market }),
@@ -64,17 +85,27 @@ export const useSessionStore = create<SessionStore>((set) => ({
     set((state) => ({
       session: touchSession({
         ...state.session,
+        chartIntervals: {
+          ...state.session.chartIntervals,
+          [chartId]: interval,
+        },
         leftInterval: chartId === 'left' ? interval : state.session.leftInterval,
         rightInterval: chartId === 'right' ? interval : state.session.rightInterval,
       }),
     })),
   setActiveChart: (chartId) =>
     set((state) => ({
-      session: touchSession({ ...state.session, activeChartId: chartId }),
+      session: touchSession({
+        ...state.session,
+        activeChartId: normalizeActiveChartId(chartId, state.session.chartLayout),
+      }),
     })),
   setFullscreenChart: (fullscreenChartId) =>
     set((state) => ({
-      session: touchSession({ ...state.session, fullscreenChartId }),
+      session: touchSession({
+        ...state.session,
+        fullscreenChartId: normalizeFullscreenChartId(fullscreenChartId, state.session.chartLayout),
+      }),
     })),
   setSidebarCollapsed: (sidebarCollapsed) =>
     set((state) => ({

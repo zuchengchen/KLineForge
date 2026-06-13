@@ -1,6 +1,7 @@
 import { unzipSync, strFromU8 } from 'fflate';
 import type { Interval, Kline, MarketType } from '../../../types/domain';
 import { binanceEndpoints } from './endpoints';
+import { withFetchTimeout } from './http';
 import { normalizeBinanceKline } from './normalizers';
 
 const supportedPublicDataMarkets: Record<MarketType, string> = {
@@ -81,13 +82,17 @@ export async function fetchMonthlyPublicDataKlines(
   fetcher: typeof fetch = fetch,
 ): Promise<Kline[]> {
   const url = createMonthlyKlinePublicDataUrl(request);
-  const response = await fetcher(url.toString());
+  const bytes = await withFetchTimeout(async (signal) => {
+    const response = await fetcher(url.toString(), {
+        signal,
+      });
 
-  if (!response.ok) {
-    throw new Error(`Binance public data request failed ${response.status}: ${url.pathname}`);
-  }
+    if (!response.ok) {
+      throw new Error(`Binance public data request failed ${response.status}: ${url.pathname}`);
+    }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+    return new Uint8Array(await response.arrayBuffer());
+  }, `Binance public data ${url.pathname}`);
   const csv = readFirstCsvFromZip(bytes);
 
   return parseBinanceKlineCsv(csv, request.market, request.symbol, request.interval);

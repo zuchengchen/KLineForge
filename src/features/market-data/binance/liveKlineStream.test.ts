@@ -113,6 +113,11 @@ describe('live K-line stream', () => {
     vi.advanceTimersByTime(50);
 
     expect(FakeWebSocket.instances).toHaveLength(2);
+    FakeWebSocket.instances[1].close();
+    vi.advanceTimersByTime(99);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(FakeWebSocket.instances).toHaveLength(3);
     expect(rows.map((row) => row.openTime)).toEqual([300_000, 600_000]);
     expect(rows[0]).toMatchObject({
       market: 'usdM',
@@ -122,7 +127,14 @@ describe('live K-line stream', () => {
       open: '1',
       close: '1.5',
     });
-    expect(states).toEqual(['connecting', 'connected', 'reconnecting', 'reconnecting']);
+    expect(states).toEqual([
+      'connecting',
+      'connected',
+      'reconnecting',
+      'reconnecting',
+      'reconnecting',
+      'reconnecting',
+    ]);
     expect(errors).toEqual([]);
 
     stream.close();

@@ -3,7 +3,12 @@ import type { ChartId } from '../../types/domain';
 import type { KlineStream } from '../market-data';
 
 interface ChartDebugHandle {
-  getDataSummary: () => { count: number; firstTimestamp: number | null; lastTimestamp: number | null };
+  getDataSummary: () => {
+    count: number;
+    firstTimestamp: number | null;
+    lastClose: number | null;
+    lastTimestamp: number | null;
+  };
   reconnect: () => void;
 }
 
@@ -22,6 +27,7 @@ export function registerChartDebugHandle(chartId: ChartId, chart: Chart, stream:
       return {
         count: data.length,
         firstTimestamp: data[0]?.timestamp ?? null,
+        lastClose: data.at(-1)?.close ?? null,
         lastTimestamp: data.at(-1)?.timestamp ?? null,
       };
     },
@@ -32,4 +38,3 @@ export function registerChartDebugHandle(chartId: ChartId, chart: Chart, stream:
 export function unregisterChartDebugHandle(chartId: ChartId): void {
   delete globalThis.window.__KLINEFORGE_CHART_DEBUG__?.[chartId];
 }
-

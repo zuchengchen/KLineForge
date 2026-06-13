@@ -1,4 +1,6 @@
 import type { KLineData } from 'klinecharts';
+import type { IndicatorSource } from '../../types/domain';
+import { withIndicatorSource } from './indicatorSources';
 
 export interface BollValue {
   mid?: number;
@@ -47,21 +49,24 @@ export function calculateVolume(data: KLineData[]): number[] {
   return data.map((row) => row.volume ?? 0);
 }
 
-export function calculateMA(data: KLineData[], period: number): Array<number | undefined> {
-  return data.map((_, index) => {
+export function calculateMA(data: KLineData[], period: number, source: IndicatorSource = 'close'): Array<number | undefined> {
+  const sourceData = withIndicatorSource(data, source);
+
+  return sourceData.map((_, index) => {
     if (index < period - 1) {
       return undefined;
     }
 
-    return average(data.slice(index - period + 1, index + 1).map((row) => row.close));
+    return average(sourceData.slice(index - period + 1, index + 1).map((row) => row.close));
   });
 }
 
-export function calculateEMA(data: KLineData[], period: number): Array<number | undefined> {
+export function calculateEMA(data: KLineData[], period: number, source: IndicatorSource = 'close'): Array<number | undefined> {
+  const sourceData = withIndicatorSource(data, source);
   const alpha = 2 / (period + 1);
   let previous: number | undefined;
 
-  return data.map((row, index) => {
+  return sourceData.map((row, index) => {
     if (index === 0) {
       previous = row.close;
       return previous;
@@ -72,13 +77,20 @@ export function calculateEMA(data: KLineData[], period: number): Array<number | 
   });
 }
 
-export function calculateBOLL(data: KLineData[], period: number, multiplier: number): BollValue[] {
-  return data.map((_, index) => {
+export function calculateBOLL(
+  data: KLineData[],
+  period: number,
+  multiplier: number,
+  source: IndicatorSource = 'close',
+): BollValue[] {
+  const sourceData = withIndicatorSource(data, source);
+
+  return sourceData.map((_, index) => {
     if (index < period - 1) {
       return {};
     }
 
-    const closes = data.slice(index - period + 1, index + 1).map((row) => row.close);
+    const closes = sourceData.slice(index - period + 1, index + 1).map((row) => row.close);
     const mid = average(closes);
     const deviation = standardDeviation(closes, mid);
 
@@ -90,12 +102,19 @@ export function calculateBOLL(data: KLineData[], period: number, multiplier: num
   });
 }
 
-export function calculateMACD(data: KLineData[], shortPeriod = 12, longPeriod = 26, signalPeriod = 9): MacdValue[] {
-  const shortEma = calculateEMA(data, shortPeriod);
-  const longEma = calculateEMA(data, longPeriod);
-  const difValues = data.map((_, index) => (shortEma[index] ?? 0) - (longEma[index] ?? 0));
+export function calculateMACD(
+  data: KLineData[],
+  shortPeriod = 12,
+  longPeriod = 26,
+  signalPeriod = 9,
+  source: IndicatorSource = 'close',
+): MacdValue[] {
+  const sourceData = withIndicatorSource(data, source);
+  const shortEma = calculateEMA(sourceData, shortPeriod);
+  const longEma = calculateEMA(sourceData, longPeriod);
+  const difValues = sourceData.map((_, index) => (shortEma[index] ?? 0) - (longEma[index] ?? 0));
   const signalData = difValues.map((close, index) => ({
-    timestamp: data[index].timestamp,
+    timestamp: sourceData[index].timestamp,
     open: close,
     high: close,
     low: close,
@@ -103,7 +122,7 @@ export function calculateMACD(data: KLineData[], shortPeriod = 12, longPeriod = 
   }));
   const deaValues = calculateEMA(signalData, signalPeriod);
 
-  return data.map((_, index) => {
+  return sourceData.map((_, index) => {
     const dif = difValues[index];
     const dea = deaValues[index] ?? 0;
 
@@ -115,16 +134,17 @@ export function calculateMACD(data: KLineData[], shortPeriod = 12, longPeriod = 
   });
 }
 
-export function calculateRSI(data: KLineData[], period: number): Array<number | undefined> {
+export function calculateRSI(data: KLineData[], period: number, source: IndicatorSource = 'close'): Array<number | undefined> {
+  const sourceData = withIndicatorSource(data, source);
   let avgGain = 0;
   let avgLoss = 0;
 
-  return data.map((row, index) => {
+  return sourceData.map((row, index) => {
     if (index === 0) {
       return undefined;
     }
 
-    const change = row.close - data[index - 1].close;
+    const change = row.close - sourceData[index - 1].close;
     const gain = Math.max(change, 0);
     const loss = Math.max(-change, 0);
 

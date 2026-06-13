@@ -64,14 +64,53 @@ export function useKLineChartInstance({
       return;
     }
 
-    const resizeObserver = new ResizeObserver(() => chart.resize());
     const container = containerRef.current;
+    let animationFrameId: number | null = null;
+    let lastWidth = 0;
+    let lastHeight = 0;
+
+    const resizeChart = (width: number, height: number) => {
+      if (width === lastWidth && height === lastHeight) {
+        return;
+      }
+
+      lastWidth = width;
+      lastHeight = height;
+
+      if (animationFrameId !== null) {
+        return;
+      }
+
+      animationFrameId = window.requestAnimationFrame(() => {
+        animationFrameId = null;
+
+        if (chartRef.current === chart) {
+          chart.resize();
+        }
+      });
+    };
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const box = entry?.contentRect;
+
+      if (!box) {
+        return;
+      }
+
+      resizeChart(box.width, box.height);
+    });
 
     if (container) {
       resizeObserver.observe(container);
     }
 
-    return () => resizeObserver.disconnect();
+    return () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      resizeObserver.disconnect();
+    };
   }, [chartRef, containerRef]);
 }
-

@@ -83,7 +83,9 @@ export function IndicatorPanel({ chartId, interval, market, onChanged, onClose, 
 
   const updateIndicator = async (
     id: string,
-    updates: Partial<Pick<IndicatorConfig, 'calcParams' | 'color' | 'lineWidth' | 'visible'>>,
+    updates: Partial<
+      Pick<IndicatorConfig, 'calcParams' | 'color' | 'lineWidth' | 'seriesStyles' | 'source' | 'visible'>
+    >,
   ) => {
     try {
       setError(null);

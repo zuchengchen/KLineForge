@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ChartId, Interval, MarketType } from '../../types/domain';
+import { chartNameI18nKeys, getChartNumber } from '../../types/chartLayout';
+import type { ChartId, ChartIntervalMap, MarketType } from '../../types/domain';
 import { getChartExportHandle } from '../chart/chartExportRegistry';
 import {
   createConfigExport,
@@ -12,21 +13,25 @@ import { exportKlinesCsv } from './csvExport';
 import { downloadDataUrl, downloadTextFile } from './downloads';
 
 interface ExportPanelProps {
-  leftInterval: Interval;
+  chartIntervals: ChartIntervalMap;
   market: MarketType;
-  rightInterval: Interval;
   symbol: string;
+  visibleChartIds: ChartId[];
 }
 
 function fileStamp(): string {
   return new Date().toISOString().replaceAll(':', '-');
 }
 
-export function ExportPanel({ leftInterval, market, rightInterval, symbol }: ExportPanelProps) {
+export function ExportPanel({ chartIntervals, market, symbol, visibleChartIds }: ExportPanelProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [message, setMessage] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const csvInterval = chartIntervals[visibleChartIds[0] ?? 'left'];
+  const intervalMeta = visibleChartIds
+    .map((chartId) => `${getChartNumber(chartId)}:${chartIntervals[chartId]}`)
+    .join(' / ');
 
   const exportPng = (chartId: ChartId) => {
     setError('');
@@ -48,13 +53,13 @@ export function ExportPanel({ leftInterval, market, rightInterval, symbol }: Exp
     const result = await exportKlinesCsv({
       market,
       symbol,
-      interval: leftInterval,
+      interval: csvInterval,
       startTime,
       endTime,
     });
 
     downloadTextFile(
-      `klineforge-${market}-${symbol}-${leftInterval}-${fileStamp()}.csv`,
+      `klineforge-${market}-${symbol}-${csvInterval}-${fileStamp()}.csv`,
       result.csv,
       'text/csv;charset=utf-8',
     );
@@ -103,12 +108,11 @@ export function ExportPanel({ leftInterval, market, rightInterval, symbol }: Exp
     <section className="export-panel" aria-label={t('exportTools')}>
       <h2>{t('exportTools')}</h2>
       <div className="export-panel__grid">
-        <button type="button" onClick={() => exportPng('left')}>
-          {t('exportLeftPng')}
-        </button>
-        <button type="button" onClick={() => exportPng('right')}>
-          {t('exportRightPng')}
-        </button>
+        {visibleChartIds.map((chartId) => (
+          <button key={chartId} type="button" onClick={() => exportPng(chartId)}>
+            {t('exportChartPng', { chart: t(chartNameI18nKeys[chartId]) })}
+          </button>
+        ))}
         <button type="button" onClick={() => void exportCsv()}>
           {t('exportCsv')}
         </button>
@@ -127,7 +131,7 @@ export function ExportPanel({ leftInterval, market, rightInterval, symbol }: Exp
         onChange={(event) => void importConfig(event.target.files?.[0] ?? null)}
       />
       <p className="export-panel__meta">
-        {symbol} · {leftInterval} / {rightInterval}
+        {symbol} · {intervalMeta}
       </p>
       {message && <p className="export-panel__message">{message}</p>}
       {error && <p className="export-panel__error">{error}</p>}

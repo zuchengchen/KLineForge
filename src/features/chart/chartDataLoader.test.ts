@@ -215,4 +215,22 @@ describe('chart data loader', () => {
     expect(result.diagnostics.providerErrors).toContain('REST blocked');
     expect(result.diagnostics.providerErrors).toContain('archive missing');
   });
+
+  it('uses fallback candles when REST and Public Data requests time out', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, 'setTimeout');
+    mocks.getKlinesWithSource.mockImplementation(() => new Promise(() => undefined));
+    mocks.fetchRecentPublicDataKlines.mockImplementation(() => new Promise(() => undefined));
+
+    const resultPromise = loadChartKlines('usdM', 'BTCUSDT', '1m');
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    const result = await resultPromise;
+
+    expect(result.source).toBe('fallback');
+    expect(result.diagnostics.providerErrors).toEqual([
+      'Direct K-line request timed out after 8000ms.',
+      'Binance Public Data chart fallback timed out after 10000ms.',
+    ]);
+  });
 });

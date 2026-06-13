@@ -38,12 +38,44 @@ describe('indicator config repository', () => {
   it('updates and deletes configs', async () => {
     const [config] = await getIndicatorConfigs(key);
 
-    await updateIndicatorConfig(config.id, { visible: false, calcParams: [10], color: '#fff', lineWidth: 2 });
+    await updateIndicatorConfig(config.id, {
+      visible: false,
+      calcParams: [10],
+      color: '#fff',
+      lineWidth: 2,
+      source: 'hl2',
+    });
     const updated = await database.indicatorConfigs.get(config.id);
 
-    expect(updated).toMatchObject({ visible: false, calcParams: [10], color: '#fff', lineWidth: 2 });
+    expect(updated).toMatchObject({ visible: false, calcParams: [10], color: '#fff', lineWidth: 2, source: 'hl2' });
+    expect(updated?.seriesStyles?.ma1).toMatchObject({ color: '#fff', lineWidth: 2 });
 
     await deleteIndicatorConfig(config.id);
     expect(await database.indicatorConfigs.get(config.id)).toBeUndefined();
+  });
+
+  it('normalizes legacy rows on read', async () => {
+    await database.indicatorConfigs.put({
+      id: 'legacy-ma',
+      schemaVersion: 1,
+      market: key.market,
+      symbol: 'BTCUSDT',
+      chartId: key.chartId,
+      interval: key.interval,
+      name: 'MA',
+      pane: 'main',
+      visible: true,
+      calcParams: [5, 10],
+      color: '#fff',
+      lineWidth: 2,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    const [config] = await getIndicatorConfigs(key);
+
+    expect(config.source).toBe('close');
+    expect(config.seriesStyles?.ma1).toMatchObject({ color: '#fff', lineWidth: 2 });
+    expect((await database.indicatorConfigs.get('legacy-ma'))?.seriesStyles?.ma2).toBeDefined();
   });
 });

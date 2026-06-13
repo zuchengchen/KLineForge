@@ -1,5 +1,6 @@
 import type { OverlayCreate, Point } from 'klinecharts';
 import type { DrawingObject, DrawingPoint, DrawingStyle, DrawingType } from '../../types/domain';
+import { drawingOverlayGroupId } from '../chart/chartOverlayConstants';
 
 const overlayNameByDrawingType: Record<DrawingType, string> = {
   'trend-line': 'segment',
@@ -56,6 +57,7 @@ export function toOverlayStyles(style: DrawingStyle): OverlayCreate['styles'] {
 export function toOverlayCreate(drawing: DrawingObject): OverlayCreate {
   return {
     id: drawing.id,
+    groupId: drawingOverlayGroupId,
     name: overlayNameByDrawingType[drawing.type],
     points: toOverlayPoints(drawing.points),
     lock: drawing.locked,

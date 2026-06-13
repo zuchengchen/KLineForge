@@ -1,4 +1,5 @@
 import type { ChartSettings, LastSessionState } from '../types/domain';
+import { normalizeSessionState } from '../app/sessionState';
 import { getSettingRecord, putSettingRecord } from './database';
 
 const sessionStorageKey = 'klineforge:last-session';
@@ -66,10 +67,12 @@ export async function loadPersistedSession(): Promise<LastSessionState | null> {
   const local = readLocalStorage(sessionStorageKey, isLastSessionState);
 
   if (local) {
-    return local;
+    return normalizeSessionState(local);
   }
 
-  return getSettingRecord<LastSessionState>('lastSession');
+  const indexedDbSession = await getSettingRecord<LastSessionState>('lastSession');
+
+  return indexedDbSession ? normalizeSessionState(indexedDbSession) : null;
 }
 
 export async function loadPersistedSettings(): Promise<ChartSettings | null> {

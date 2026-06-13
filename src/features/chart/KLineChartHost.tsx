@@ -1,4 +1,4 @@
-import { type Chart } from 'klinecharts';
+import { type Chart, type Crosshair, type KLineData } from 'klinecharts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -9,6 +9,7 @@ import type {
   DrawingStyle,
   DrawingType,
   Interval,
+  IndicatorConfig,
   MarketType,
 } from '../../types/domain';
 import { DrawingToolbar } from '../drawings/DrawingToolbar';
@@ -20,14 +21,21 @@ import {
 } from '../drawings/drawingRepository';
 import { DrawingHistory, invertDrawingHistoryEntry, replayDrawingHistoryEntry } from '../drawings/drawingHistory';
 import { toOverlayCreate } from '../drawings/klineDrawingAdapter';
+import { deleteIndicatorConfig, getIndicatorConfigs, updateIndicatorConfig } from '../indicators/indicatorConfigRepository';
+import { IndicatorSettingsDialog } from '../indicators/IndicatorSettingsDialog';
 import type { ChartKlineLoadResult } from './chartDataLoader';
-import { createDefaultDrawingPoints, overlayPaneId, persistOverlayDrawing } from './chartDrawingHelpers';
+import { createDefaultDrawingPoints, persistOverlayDrawing } from './chartDrawingHelpers';
+import { drawingOverlayGroupId, overlayPaneId } from './chartOverlayConstants';
+import { getLatestOhlcCandle } from './chartOhlcLegend';
 import { attachCrosshairSync } from './crosshairSync';
+import { IndicatorLegendOverlay, type IndicatorPaneLegendGroup } from './IndicatorLegendOverlay';
+import { hitTestIndicatorLine } from './indicatorHitTesting';
 import { isEditableTarget } from './keyboardTargets';
 import { useChartDataFeed } from './useChartDataFeed';
 import { useChartIndicators } from './useChartIndicators';
 import { useKLineChartInstance } from './useKLineChartInstance';
 import { useChartStyleSettings } from './useChartStyleSettings';
+import { useYAxisWheelZoom } from './useYAxisWheelZoom';
 import './KLineChartHost.css';
 
 interface KLineChartHostProps {
@@ -46,6 +54,63 @@ interface KLineChartHostProps {
 }
 
 type ChartStatus = 'loading' | 'ready' | 'error';
+
+function getChartPricePrecision(chart: Chart | null): number {
+  const precision = chart?.getSymbol?.()?.pricePrecision;
+
+  return typeof precision === 'number' && Number.isFinite(precision) ? precision : 4;
+}
+
+function resolveCrosshairCandle(chart: Chart, data?: unknown): KLineData | null {
+  const crosshair = data as Crosshair | undefined;
+
+  if (crosshair?.kLineData) {
+    return crosshair.kLineData;
+  }
+
+  if (typeof crosshair?.timestamp === 'number') {
+    return chart.getDataList().find((item) => item.timestamp === crosshair.timestamp) ?? null;
+  }
+
+  if (typeof crosshair?.x === 'number') {
+    const point = chart.convertFromPixel([{ x: crosshair.x }]);
+    const timestamp = Array.isArray(point) ? point[0]?.timestamp : point.timestamp;
+
+    if (typeof timestamp === 'number') {
+      return chart.getDataList().find((item) => item.timestamp === timestamp) ?? null;
+    }
+  }
+
+  return null;
+}
+
+function areLegendGroupsEqual(left: IndicatorPaneLegendGroup[], right: IndicatorPaneLegendGroup[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((group, index) => {
+    const other = right[index];
+
+    return (
+      other !== undefined &&
+      group.paneId === other.paneId &&
+      group.top === other.top &&
+      group.configs.length === other.configs.length &&
+      group.configs.every((config, configIndex) => {
+        const otherConfig = other.configs[configIndex];
+
+        return (
+          otherConfig !== undefined &&
+          config.id === otherConfig.id &&
+          config.visible === otherConfig.visible &&
+          config.updatedAt === otherConfig.updatedAt &&
+          config.calcParams.join(',') === otherConfig.calcParams.join(',')
+        );
+      })
+    );
+  });
+}
 
 export function KLineChartHost({
   chartId,
@@ -72,6 +137,7 @@ export function KLineChartHost({
     redoDrawing: () => {},
     undoDrawing: () => {},
   });
+  const drawingInteractionRef = useRef(false);
   const loadGenerationRef = useRef(0);
   const lastEmittedCrosshairTimestampRef = useRef<number | null>(null);
   const drawingsRef = useRef<DrawingObject[]>([]);
@@ -83,6 +149,14 @@ export function KLineChartHost({
   const [pendingTool, setPendingTool] = useState<DrawingType | null>(null);
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [historyState, setHistoryState] = useState({ canRedo: false, canUndo: false });
+  const [legendCandle, setLegendCandle] = useState<KLineData | null>(null);
+  const [indicatorConfigs, setIndicatorConfigs] = useState<IndicatorConfig[]>([]);
+  const [indicatorPaneGroups, setIndicatorPaneGroups] = useState<IndicatorPaneLegendGroup[]>([]);
+  const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(null);
+  const [hoveredIndicatorId, setHoveredIndicatorId] = useState<string | null>(null);
+  const [settingsIndicator, setSettingsIndicator] = useState<IndicatorConfig | null>(null);
+  const [localIndicatorRevision, setLocalIndicatorRevision] = useState(0);
+  const [pricePrecision, setPricePrecision] = useState(4);
 
   const syncHistoryState = () => {
     setHistoryState({
@@ -107,20 +181,38 @@ export function KLineChartHost({
   };
 
   const renderDrawings = useCallback((chart: Chart, nextDrawings: DrawingObject[]) => {
-    chart.removeOverlay();
+    chart.removeOverlay({ groupId: drawingOverlayGroupId });
 
     for (const drawing of nextDrawings) {
+      chart.removeOverlay({ id: drawing.id });
       chart.createOverlay({
         ...toOverlayCreate(drawing),
         paneId: overlayPaneId,
-        onSelected: () => setSelectedDrawingId(drawing.id),
+        onSelected: () => {
+          drawingInteractionRef.current = true;
+          setSelectedDrawingId(drawing.id);
+        },
+        onDeselected: () => {
+          drawingInteractionRef.current = false;
+          setPendingTool(null);
+          setSelectedDrawingId((currentId) => (currentId === drawing.id ? null : currentId));
+        },
         onDrawEnd: (event) => {
+          drawingInteractionRef.current = false;
+          setPendingTool(null);
           const nextDrawing = persistOverlayDrawing(event.overlay, drawing);
           void putDrawing(nextDrawing).then((savedDrawing) => {
             syncDrawings(drawingsRef.current.map((item) => (item.id === savedDrawing.id ? savedDrawing : item)));
           });
         },
+        onPressedMoveStart: () => {
+          drawingInteractionRef.current = true;
+        },
+        onPressedMoving: () => {
+          drawingInteractionRef.current = true;
+        },
         onPressedMoveEnd: (event) => {
+          drawingInteractionRef.current = false;
           if (drawing.locked) {
             return;
           }
@@ -138,6 +230,25 @@ export function KLineChartHost({
     }
   }, []);
 
+  useEffect(() => {
+    if (pendingTool === null && selectedDrawingId === null) {
+      drawingInteractionRef.current = false;
+    }
+  }, [pendingTool, selectedDrawingId]);
+
+  const refreshIndicatorConfigs = useCallback(async () => {
+    const nextConfigs = await getIndicatorConfigs({ market, symbol, chartId, interval });
+
+    setIndicatorConfigs(nextConfigs);
+    setSettingsIndicator((current) =>
+      current ? nextConfigs.find((config) => config.id === current.id) ?? null : null,
+    );
+    setSelectedIndicatorId((current) =>
+      current && nextConfigs.some((config) => config.id === current) ? current : null,
+    );
+    setLocalIndicatorRevision((revision) => revision + 1);
+  }, [chartId, interval, market, symbol]);
+
   const handleChartInitError = useCallback((message: string) => {
     setStatus('error');
     setError(message);
@@ -152,6 +263,12 @@ export function KLineChartHost({
   });
 
   useChartStyleSettings({ chartRef, settings });
+  useYAxisWheelZoom({
+    chartRef,
+    isVerticalPanDisabled: pendingTool !== null || selectedDrawingId !== null,
+    resetKey: `${market}:${symbol}:${interval}`,
+    verticalPanBlockRef: drawingInteractionRef,
+  });
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -163,7 +280,130 @@ export function KLineChartHost({
     return attachCrosshairSync(chart, chartId, interval, lastEmittedCrosshairTimestampRef);
   }, [chartId, interval]);
 
-  useChartIndicators({ chartId, chartRef, indicatorRevision, interval, market, symbol });
+  useChartIndicators({
+    chartId,
+    chartRef,
+    indicatorRevision: indicatorRevision + localIndicatorRevision,
+    interval,
+    market,
+    selectedIndicatorId,
+    symbol,
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    getIndicatorConfigs({ market, symbol, chartId, interval }).then((configs) => {
+      if (active) {
+        setIndicatorConfigs(configs);
+        setSelectedIndicatorId(null);
+        setHoveredIndicatorId(null);
+        setSettingsIndicator(null);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [chartId, indicatorRevision, interval, market, symbol]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+
+    if (!chart) {
+      return;
+    }
+
+    const updateLegendCandle = (data?: unknown) => {
+      setLegendCandle(resolveCrosshairCandle(chart, data) ?? getLatestOhlcCandle(chart.getDataList()));
+    };
+
+    const restoreLatest = () => setLegendCandle(getLatestOhlcCandle(chart.getDataList()));
+    const chartDom = chart.getDom();
+
+    restoreLatest();
+    chart.subscribeAction('onCrosshairChange', updateLegendCandle);
+    chartDom?.addEventListener('mouseleave', restoreLatest);
+
+    return () => {
+      chart.unsubscribeAction('onCrosshairChange', updateLegendCandle);
+      chartDom?.removeEventListener('mouseleave', restoreLatest);
+    };
+  }, [chartRef, chartId, interval, market, symbol, status]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+
+    if (!chart) {
+      return;
+    }
+
+    const updatePrecision = () => setPricePrecision(getChartPricePrecision(chart));
+
+    updatePrecision();
+    chart.subscribeAction('onVisibleRangeChange', updatePrecision);
+
+    return () => chart.unsubscribeAction('onVisibleRangeChange', updatePrecision);
+  }, [chartRef, chartId, interval, market, symbol, status]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+
+    if (!chart) {
+      return;
+    }
+
+    let animationFrameId: number | null = null;
+    const updatePaneGroups = () => {
+      const visibleConfigs = indicatorConfigs;
+      const groupsByPane = new Map<string, IndicatorConfig[]>();
+
+      for (const config of visibleConfigs) {
+        const paneId = config.pane === 'main' ? 'candle_pane' : `${chartId}-${config.name}-pane`;
+        groupsByPane.set(paneId, [...(groupsByPane.get(paneId) ?? []), config]);
+      }
+
+      const nextGroups = [...groupsByPane.entries()].map(([paneId, configs]) => ({
+          paneId,
+          top: paneId === 'candle_pane' ? 0 : chart.getSize(paneId)?.top ?? 0,
+          configs,
+        }));
+
+      setIndicatorPaneGroups((currentGroups) =>
+        areLegendGroupsEqual(currentGroups, nextGroups) ? currentGroups : nextGroups,
+      );
+    };
+    const schedulePaneGroupUpdate = () => {
+      if (animationFrameId !== null) {
+        return;
+      }
+
+      animationFrameId = window.requestAnimationFrame(() => {
+        animationFrameId = null;
+        updatePaneGroups();
+      });
+    };
+
+    updatePaneGroups();
+    const resizeObserver = new ResizeObserver(schedulePaneGroupUpdate);
+    const root = chart.getDom();
+
+    if (root) {
+      resizeObserver.observe(root);
+    }
+
+    const onVisibleRangeChange = () => schedulePaneGroupUpdate();
+    chart.subscribeAction('onVisibleRangeChange', onVisibleRangeChange);
+
+    return () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+
+      resizeObserver.disconnect();
+      chart.unsubscribeAction('onVisibleRangeChange', onVisibleRangeChange);
+    };
+  }, [chartId, chartRef, indicatorConfigs, localIndicatorRevision, status]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -299,6 +539,7 @@ export function KLineChartHost({
 
     drawingHistoryRef.current.push({ action: 'delete', before: deleted });
     syncHistoryState();
+    setPendingTool(null);
     setSelectedDrawingId(null);
     commitDrawingList(drawingsRef.current.filter((drawing) => drawing.id !== currentDrawing.id));
     enqueueDrawingWrite(() => deleteDrawing(currentDrawing.id));
@@ -365,6 +606,83 @@ export function KLineChartHost({
 
     syncHistoryState();
   };
+
+  const selectIndicator = (config: IndicatorConfig) => {
+    setSelectedDrawingId(null);
+    setPendingTool(null);
+    setSelectedIndicatorId(config.id);
+  };
+
+  const toggleIndicator = async (config: IndicatorConfig) => {
+    await updateIndicatorConfig(config.id, { visible: !config.visible });
+    await refreshIndicatorConfigs();
+  };
+
+  const removeIndicator = async (config: IndicatorConfig) => {
+    await deleteIndicatorConfig(config.id);
+    if (selectedIndicatorId === config.id) {
+      setSelectedIndicatorId(null);
+    }
+    if (settingsIndicator?.id === config.id) {
+      setSettingsIndicator(null);
+    }
+    await refreshIndicatorConfigs();
+  };
+
+  const openIndicatorSettings = (config: IndicatorConfig) => {
+    selectIndicator(config);
+    setSettingsIndicator(config);
+  };
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const root = chart?.getDom();
+
+    if (!chart || !root) {
+      return;
+    }
+
+    const onClick = (event: MouseEvent) => {
+      if (pendingTool !== null || selectedDrawingId !== null || drawingInteractionRef.current || isEditableTarget(event.target)) {
+        return;
+      }
+
+      const rect = root.getBoundingClientRect();
+      const point = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+      const dataList = chart.getDataList();
+
+      for (const config of indicatorConfigs) {
+        const hitId = hitTestIndicatorLine({
+          config,
+          dataList,
+          point,
+          toPixel: ({ paneId, timestamp, value }) => {
+            const pixel = chart.convertToPixel({ timestamp, value }, { paneId, absolute: true });
+
+            return 'x' in pixel &&
+              'y' in pixel &&
+              typeof pixel.x === 'number' &&
+              typeof pixel.y === 'number'
+              ? { x: pixel.x, y: pixel.y }
+              : null;
+          },
+        });
+
+        if (hitId) {
+          event.stopPropagation();
+          setSelectedIndicatorId(hitId);
+          return;
+        }
+      }
+    };
+
+    root.addEventListener('click', onClick);
+
+    return () => root.removeEventListener('click', onClick);
+  }, [chartRef, indicatorConfigs, pendingTool, selectedDrawingId]);
 
   useEffect(() => {
     keyboardActionsRef.current = {
@@ -448,6 +766,18 @@ export function KLineChartHost({
       data-connection-state={connectionState}
     >
       <div ref={containerRef} className="kline-chart-host__canvas" />
+      <IndicatorLegendOverlay
+        candle={legendCandle}
+        hoveredIndicatorId={hoveredIndicatorId}
+        indicatorGroups={indicatorPaneGroups}
+        onDeleteIndicator={(config) => void removeIndicator(config)}
+        onHoverIndicator={setHoveredIndicatorId}
+        onOpenSettings={openIndicatorSettings}
+        onSelectIndicator={selectIndicator}
+        onToggleIndicator={(config) => void toggleIndicator(config)}
+        pricePrecision={pricePrecision}
+        selectedIndicatorId={selectedIndicatorId}
+      />
       <div className="kline-chart-host__actions">
         <button type="button" onClick={onExportPng}>
           PNG
@@ -465,7 +795,13 @@ export function KLineChartHost({
         onCreate={(type) => void armDrawingTool(type)}
         onDelete={() => void deleteSelectedDrawing()}
         onRedo={() => void redoDrawing()}
-        onSelect={setSelectedDrawingId}
+        onSelect={(id) => {
+          if (id === null) {
+            setPendingTool(null);
+          }
+
+          setSelectedDrawingId(id);
+        }}
         onStyleChange={(style) => void updateSelectedDrawing({ style }, 'style')}
         onToggleHidden={() => void updateSelectedDrawing({ visible: !selectedDrawing?.visible }, 'visibility')}
         onToggleLocked={() => void updateSelectedDrawing({ locked: !selectedDrawing?.locked }, 'lock')}
@@ -484,6 +820,14 @@ export function KLineChartHost({
       <div className={`kline-chart-host__connection kline-chart-host__connection--${connectionState}`}>
         {t(`connectionStates.${connectionState}`)}
       </div>
+      {settingsIndicator && (
+        <IndicatorSettingsDialog
+          key={settingsIndicator.id}
+          config={settingsIndicator}
+          onClose={() => setSettingsIndicator(null)}
+          onSaved={() => void refreshIndicatorConfigs()}
+        />
+      )}
     </div>
   );
 }

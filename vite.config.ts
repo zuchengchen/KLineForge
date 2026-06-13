@@ -24,6 +24,11 @@ function binanceAccessNoticePlugin(): Plugin {
 export default defineConfig({
   base: './',
   plugins: [react(), binanceAccessNoticePlugin()],
+  server: {
+    hmr: {
+      overlay: false,
+    },
+  },
   build: {
     rolldownOptions: {
       output: {

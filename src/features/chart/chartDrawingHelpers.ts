@@ -3,8 +3,6 @@ import type { DrawingObject, DrawingPoint, DrawingType } from '../../types/domai
 import { drawingPointCount } from '../drawings/drawingDefinitions';
 import { toDrawingPoints } from '../drawings/klineDrawingAdapter';
 
-export const overlayPaneId = 'candle_pane';
-
 export function createDefaultDrawingPoints(chart: Chart, type: DrawingType): DrawingPoint[] {
   const data = chart.getDataList();
   const last = data.at(-1);
@@ -48,4 +46,3 @@ export function persistOverlayDrawing(overlay: Overlay, drawing: DrawingObject):
     updatedAt: Date.now(),
   };
 }
-

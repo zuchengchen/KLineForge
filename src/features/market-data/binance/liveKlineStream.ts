@@ -13,6 +13,7 @@ export interface LiveKlineStreamRequest {
   onStateChange: (state: ConnectionState) => void;
   onError: (error: Error) => void;
   reconnectDelayMs?: number;
+  maxReconnectDelayMs?: number;
   createWebSocket?: (url: string) => WebSocket;
 }
 
@@ -42,12 +43,14 @@ function parseStreamMessage(data: unknown, market: MarketType): Kline {
 
 export function createLiveKlineStream(request: LiveKlineStreamRequest): LiveKlineStream {
   const reconnectDelayMs = request.reconnectDelayMs ?? 2_000;
+  const maxReconnectDelayMs = request.maxReconnectDelayMs ?? 30_000;
   const createWebSocket = request.createWebSocket ?? ((url: string) => new WebSocket(url));
   const deduplicator = new KlineStreamDeduplicator();
   const url = getKlineStreamUrl(request.market, request.symbol, request.interval);
   let socket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let closedByUser = false;
+  let reconnectAttempt = 0;
 
   const clearReconnectTimer = () => {
     if (reconnectTimer !== null) {
@@ -69,6 +72,7 @@ export function createLiveKlineStream(request: LiveKlineStreamRequest): LiveKlin
     }
 
     socket.addEventListener('open', () => {
+      reconnectAttempt = 0;
       request.onStateChange('connected');
     });
 
@@ -99,7 +103,9 @@ export function createLiveKlineStream(request: LiveKlineStreamRequest): LiveKlin
       }
 
       request.onStateChange('reconnecting');
-      reconnectTimer = setTimeout(() => connect(true), reconnectDelayMs);
+      const delayMs = Math.min(maxReconnectDelayMs, reconnectDelayMs * 2 ** reconnectAttempt);
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(() => connect(true), delayMs);
     });
   };
 
@@ -118,6 +124,7 @@ export function createLiveKlineStream(request: LiveKlineStreamRequest): LiveKlin
     },
     reconnect: () => {
       closedByUser = false;
+      reconnectAttempt = 0;
       clearReconnectTimer();
 
       if (socket) {

@@ -17,7 +17,11 @@ export type Interval =
   | '1w'
   | '1M';
 
-export type ChartId = 'left' | 'right';
+export type ChartId = 'left' | 'right' | 'third' | 'fourth';
+
+export type ChartLayout = 1 | 2 | 3 | 4;
+
+export type ChartIntervalMap = Record<ChartId, Interval>;
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'offline' | 'error';
 
@@ -29,10 +33,23 @@ export type PriceColorMode = 'green-up-red-down' | 'red-up-green-down';
 
 export type KlineSource = 'rest' | 'websocket' | 'cache' | 'public-data' | 'fallback';
 
+export type IndicatorSource = 'open' | 'high' | 'low' | 'close' | 'hl2' | 'hlc3' | 'ohlc4';
+
+export type IndicatorLineStyle = 'solid' | 'dashed';
+
+export interface IndicatorSeriesStyle {
+  color: string;
+  lineWidth: number;
+  lineStyle: IndicatorLineStyle;
+  visible: boolean;
+}
+
 export interface LastSessionState {
   schemaVersion: 1;
   market: MarketType;
   symbol: string;
+  chartLayout: ChartLayout;
+  chartIntervals: ChartIntervalMap;
   leftInterval: Interval;
   rightInterval: Interval;
   activeChartId: ChartId;
@@ -134,6 +151,25 @@ export interface IndicatorConfig {
   calcParams: number[];
   color: string;
   lineWidth: number;
+  source?: IndicatorSource;
+  seriesStyles?: Record<string, IndicatorSeriesStyle>;
+  settingsVersion?: 1;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface IndicatorTemplate {
+  id: string;
+  schemaVersion: 1;
+  name: string;
+  indicatorName: IndicatorName;
+  calcParams: number[];
+  visible: boolean;
+  color: string;
+  lineWidth: number;
+  source?: IndicatorSource;
+  seriesStyles: Record<string, IndicatorSeriesStyle>;
+  isDefault: boolean;
   createdAt: number;
   updatedAt: number;
 }

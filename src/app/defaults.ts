@@ -1,4 +1,5 @@
 import type { ChartSettings, LastSessionState, LanguageMode } from '../types/domain';
+import { defaultChartIntervals } from '../types/chartLayout';
 
 export function detectInitialLanguage(): LanguageMode {
   if (typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh')) {
@@ -13,6 +14,8 @@ export function createDefaultSession(now = Date.now()): LastSessionState {
     schemaVersion: 1,
     market: 'usdM',
     symbol: 'BTCUSDT',
+    chartLayout: 2,
+    chartIntervals: { ...defaultChartIntervals },
     leftInterval: '5m',
     rightInterval: '1h',
     activeChartId: 'left',

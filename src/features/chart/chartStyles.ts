@@ -56,6 +56,7 @@ export function createChartStyles(settings: ChartSettings) {
       },
     },
     yAxis: {
+      size: 'auto' as const,
       axisLine: {
         color: dark ? 'rgba(132,150,176,0.22)' : 'rgba(96,110,130,0.22)',
       },
@@ -74,4 +75,3 @@ export function createChartStyles(settings: ChartSettings) {
     },
   };
 }
-

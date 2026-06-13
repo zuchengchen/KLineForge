@@ -2,11 +2,35 @@ import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 
 const isDevelopment = process.env.KLINEFORGE_DESKTOP_DEV === 'true';
+const disableGpu = process.env.KLINEFORGE_DISABLE_GPU === 'true';
+const openDevTools = process.env.KLINEFORGE_OPEN_DEVTOOLS === 'true';
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173';
 const productionDist = path.resolve(__dirname, '../../dist');
 const productionEntry = path.join(productionDist, 'index.html');
 
+if (disableGpu) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+}
+
 let mainWindow: BrowserWindow | null = null;
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow) {
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.focus();
+});
 
 async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -48,25 +72,29 @@ async function createMainWindow(): Promise<void> {
 
   if (isDevelopment) {
     await mainWindow.loadURL(devServerUrl);
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    if (openDevTools) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
     return;
   }
 
   await mainWindow.loadFile(productionEntry);
 }
 
-app.whenReady().then(() => {
-  void createMainWindow();
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    void createMainWindow();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createMainWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createMainWindow();
+      }
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
     }
   });
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+}

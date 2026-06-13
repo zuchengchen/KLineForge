@@ -7,8 +7,15 @@ describe('default application state', () => {
 
     expect(session.market).toBe('usdM');
     expect(session.symbol).toBe('BTCUSDT');
+    expect(session.chartLayout).toBe(2);
     expect(session.leftInterval).toBe('5m');
     expect(session.rightInterval).toBe('1h');
+    expect(session.chartIntervals).toEqual({
+      left: '5m',
+      right: '1h',
+      third: '4h',
+      fourth: '1d',
+    });
     expect(session.schemaVersion).toBe(1);
     expect(session.updatedAt).toBe(100);
   });

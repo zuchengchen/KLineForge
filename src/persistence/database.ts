@@ -3,6 +3,7 @@ import type {
   ChartSettings,
   DrawingObject,
   IndicatorConfig,
+  IndicatorTemplate,
   Interval,
   Kline,
   KlineSource,
@@ -90,6 +91,8 @@ export class KLineForgeDatabase extends Dexie {
 
   indicatorConfigs!: Table<IndicatorConfig, string>;
 
+  indicatorTemplates!: Table<IndicatorTemplate, string>;
+
   constructor() {
     super('klineforge');
 
@@ -109,6 +112,10 @@ export class KLineForgeDatabase extends Dexie {
 
     this.version(2).stores({
       indicatorConfigs: 'id, [market+symbol+chartId+interval], [market+symbol], [chartId+interval], updatedAt',
+    });
+
+    this.version(3).stores({
+      indicatorTemplates: 'id, indicatorName, [indicatorName+isDefault], updatedAt',
     });
   }
 }

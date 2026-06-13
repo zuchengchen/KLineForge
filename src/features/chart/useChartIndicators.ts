@@ -2,6 +2,7 @@ import type { Chart } from 'klinecharts';
 import { useEffect, type MutableRefObject } from 'react';
 import type { ChartId, Interval, MarketType } from '../../types/domain';
 import { getIndicatorConfigs } from '../indicators/indicatorConfigRepository';
+import { getIndicatorSeriesDefinitions, normalizeIndicatorConfig } from '../indicators/indicatorSeriesStyles';
 
 interface UseChartIndicatorsParams {
   chartId: ChartId;
@@ -9,6 +10,7 @@ interface UseChartIndicatorsParams {
   indicatorRevision: number;
   interval: Interval;
   market: MarketType;
+  selectedIndicatorId?: string | null;
   symbol: string;
 }
 
@@ -18,6 +20,7 @@ export function useChartIndicators({
   indicatorRevision,
   interval,
   market,
+  selectedIndicatorId = null,
   symbol,
 }: UseChartIndicatorsParams): void {
   useEffect(() => {
@@ -41,23 +44,59 @@ export function useChartIndicators({
           continue;
         }
 
+        const normalizedConfig = normalizeIndicatorConfig(config);
+        const selected = normalizedConfig.id === selectedIndicatorId;
+        const seriesDefinitions = getIndicatorSeriesDefinitions(normalizedConfig.name, normalizedConfig.calcParams);
+        const lines = seriesDefinitions
+          .filter((series) => series.kind === 'line')
+          .map((series) => {
+            const style = normalizedConfig.seriesStyles?.[series.key];
+            const visible = style?.visible ?? true;
+
+            return {
+              color: visible ? style?.color ?? normalizedConfig.color : 'rgba(0, 0, 0, 0)',
+              size: visible ? (style?.lineWidth ?? normalizedConfig.lineWidth) + (selected ? 1 : 0) : 0,
+              style: style?.lineStyle ?? 'solid',
+              dashedValue: [4, 4],
+            };
+          });
+        const bars = seriesDefinitions
+          .filter((series) => series.kind === 'histogram')
+          .map((series) => {
+            const style = normalizedConfig.seriesStyles?.[series.key];
+            const visible = style?.visible ?? true;
+            const color = visible ? style?.color ?? normalizedConfig.color : 'rgba(0, 0, 0, 0)';
+
+            return {
+              upColor: color,
+              downColor: color,
+              noChangeColor: color,
+              borderColor: color,
+              borderSize: selected ? 2 : 1,
+              borderStyle: style?.lineStyle ?? 'solid',
+              borderDashedValue: [4, 4],
+            };
+          });
+
         chart.createIndicator(
           {
-            id: config.id,
-            name: config.name,
-            calcParams: config.calcParams,
+            id: normalizedConfig.id,
+            name: normalizedConfig.name,
+            calcParams: normalizedConfig.calcParams,
+            extendData: {
+              source: normalizedConfig.source,
+            },
             styles: {
-              lines: [
-                {
-                  color: config.color,
-                  size: config.lineWidth,
-                },
-              ],
+              bars,
+              lines,
             },
           },
           {
             isStack: true,
-            pane: config.pane === 'main' ? { id: 'candle_pane' } : { id: `${chartId}-${config.name}-pane` },
+            pane:
+              normalizedConfig.pane === 'main'
+                ? { id: 'candle_pane' }
+                : { id: `${chartId}-${normalizedConfig.name}-pane` },
           },
         );
       }
@@ -66,6 +105,5 @@ export function useChartIndicators({
     return () => {
       active = false;
     };
-  }, [chartId, chartRef, indicatorRevision, interval, market, symbol]);
+  }, [chartId, chartRef, indicatorRevision, interval, market, selectedIndicatorId, symbol]);
 }
-

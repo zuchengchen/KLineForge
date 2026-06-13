@@ -14,10 +14,9 @@ import {
 } from './cacheQueue';
 
 interface CacheManagementPageProps {
+  intervals: Interval[];
   market: MarketType;
   symbol: string;
-  leftInterval: Interval;
-  rightInterval: Interval;
 }
 
 function formatDate(value: number | undefined): string {
@@ -44,9 +43,10 @@ function formatRange(startTime: number | undefined, endTime: number | undefined)
   return `${formatDate(startTime)} - ${formatDate(endTime)}`;
 }
 
-export function CacheManagementPage({ leftInterval, market, rightInterval, symbol }: CacheManagementPageProps) {
+export function CacheManagementPage({ intervals, market, symbol }: CacheManagementPageProps) {
   const { t } = useTranslation();
   const [tasks, setTasks] = useState<CacheTaskRecord[]>([]);
+  const intervalKey = intervals.join('|');
 
   const refresh = async () => {
     setTasks(await getCacheTasks(market, symbol));
@@ -94,7 +94,7 @@ export function CacheManagementPage({ leftInterval, market, rightInterval, symbo
   useEffect(() => {
     let active = true;
 
-    ensureCacheTasksForSymbol(market, symbol, [leftInterval, rightInterval])
+    ensureCacheTasksForSymbol(market, symbol, intervals)
       .then(() => cacheQueueRunner.start())
       .then(() => getCacheTasks(market, symbol))
       .then((nextTasks) => {
@@ -115,7 +115,7 @@ export function CacheManagementPage({ leftInterval, market, rightInterval, symbo
       active = false;
       globalThis.clearInterval(intervalId);
     };
-  }, [leftInterval, market, rightInterval, symbol]);
+  }, [intervalKey, intervals, market, symbol]);
 
   return (
     <section className="cache-page">

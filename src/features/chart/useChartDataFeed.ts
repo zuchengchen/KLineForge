@@ -1,13 +1,15 @@
-import type { Chart, DataLoader } from 'klinecharts';
+import type { Chart, DataLoader, KLineData } from 'klinecharts';
 import { useEffect, type MutableRefObject } from 'react';
-import type { ChartId, ConnectionState, Interval, MarketType } from '../../types/domain';
+import type { ChartId, ConnectionState, Interval, Kline, MarketType, SymbolInfo } from '../../types/domain';
 import { indexedDbKlineCache } from '../cache';
-import { BinanceDirectMarketDataProvider, type KlineStream } from '../market-data';
+import { MarketDataProviderChain, type KlineStream } from '../market-data';
 import { registerChartDebugHandle, unregisterChartDebugHandle } from './chartDebugHandles';
 import { loadChartKlines, loadEarlierChartKlines, type ChartKlineLoadResult } from './chartDataLoader';
+import { resolveChartSymbol } from './chartSymbolPrecision';
 import { intervalToPeriod, toKLineChartData } from './klineChartAdapter';
+import { createLatestKlinePoller, type LatestKlinePoller } from './latestKlinePoller';
 
-const provider = new BinanceDirectMarketDataProvider();
+const liveProvider = new MarketDataProviderChain();
 
 interface UseChartDataFeedParams {
   chartId: ChartId;
@@ -48,14 +50,76 @@ export function useChartDataFeed({
     onError(null);
     onDataSource(null);
     onConnectionState('idle');
-    chart.setSymbol({
-      ticker: symbol,
-      pricePrecision: 2,
-      volumePrecision: 4,
-    });
     chart.setPeriod(intervalToPeriod(interval));
 
     let liveStream: KlineStream | null = null;
+    let livePoller: LatestKlinePoller | null = null;
+    let lastDeliveredOpenTime: number | null = null;
+    let chartData: KLineData[] = [];
+    let symbolInfo: SymbolInfo | null = null;
+    let appliedChartSymbol: ReturnType<typeof resolveChartSymbol> | null = null;
+    const applyChartSymbol = (klines: KLineData[] = chartData, fallbackPrice?: number) => {
+      if (loadGenerationRef.current !== loadGeneration || chartRef.current !== chart) {
+        return;
+      }
+
+      const nextChartSymbol = resolveChartSymbol({ fallbackPrice, klines, symbol, symbolInfo });
+
+      if (
+        appliedChartSymbol?.ticker === nextChartSymbol.ticker &&
+        appliedChartSymbol.pricePrecision === nextChartSymbol.pricePrecision &&
+        appliedChartSymbol.volumePrecision === nextChartSymbol.volumePrecision
+      ) {
+        return;
+      }
+
+      appliedChartSymbol = nextChartSymbol;
+      chart.setSymbol(nextChartSymbol);
+    };
+
+    applyChartSymbol();
+    void liveProvider
+      .getSymbols(market)
+      .then((symbols) => {
+        const normalizedSymbol = symbol.toUpperCase();
+        const nextSymbolInfo = symbols.find((item) => item.symbol.toUpperCase() === normalizedSymbol) ?? null;
+
+        if (loadGenerationRef.current !== loadGeneration || chartRef.current !== chart) {
+          return;
+        }
+
+        symbolInfo = nextSymbolInfo;
+        applyChartSymbol();
+      })
+      .catch(() => undefined);
+
+    const deliverLiveKline = (kline: Kline, callback: (data: ReturnType<typeof toKLineChartData>) => void) => {
+      if (loadGenerationRef.current !== loadGeneration || chartRef.current !== chart) {
+        return;
+      }
+
+      if (lastDeliveredOpenTime !== null && kline.openTime < lastDeliveredOpenTime) {
+        return;
+      }
+
+      lastDeliveredOpenTime = Math.max(lastDeliveredOpenTime ?? kline.openTime, kline.openTime);
+      const nextData = toKLineChartData(kline);
+      const existingIndex = chartData.findIndex((item) => item.timestamp === nextData.timestamp);
+
+      if (existingIndex >= 0) {
+        chartData = chartData.map((item, index) => (index === existingIndex ? nextData : item));
+      } else {
+        chartData = [...chartData, nextData];
+      }
+
+      applyChartSymbol(chartData, nextData.close);
+      callback(nextData);
+      void indexedDbKlineCache.writeKlines({ market, symbol, interval }, [kline]);
+    };
+    const stopLivePolling = () => {
+      livePoller?.stop();
+      livePoller = null;
+    };
     const dataLoader: DataLoader = {
       getBars: async ({ callback, timestamp, type }) => {
         if (type === 'forward') {
@@ -96,6 +160,8 @@ export function useChartDataFeed({
             throw new Error('No K-line data was returned.');
           }
 
+          chartData = data;
+          applyChartSymbol(data, data.at(-1)?.close);
           callback(data, {
             forward: result.source !== 'fallback' && data.length > 0,
             backward: false,
@@ -114,20 +180,14 @@ export function useChartDataFeed({
         }
       },
       subscribeBar: ({ callback }) => {
-        let lastDeliveredOpenTime: number | null = null;
         liveStream?.close();
-        liveStream = provider.createKlineStream({
+        stopLivePolling();
+        liveStream = liveProvider.createKlineStream({
           market,
           symbol,
           intervals: [interval],
           onKline: (kline) => {
-            if (lastDeliveredOpenTime !== null && kline.openTime < lastDeliveredOpenTime) {
-              return;
-            }
-
-            lastDeliveredOpenTime = kline.openTime;
-            callback(toKLineChartData(kline));
-            void indexedDbKlineCache.writeKlines({ market, symbol, interval }, [kline]);
+            deliverLiveKline(kline, callback);
           },
           onStateChange: (state) => {
             if (chartRef.current === chart) {
@@ -141,6 +201,20 @@ export function useChartDataFeed({
           },
         }) as KlineStream;
 
+        livePoller = createLatestKlinePoller({
+          interval,
+          market,
+          provider: liveProvider,
+          symbol,
+          onKline: (kline) => deliverLiveKline(kline, callback),
+          onError: (pollError) => {
+            if (chartRef.current === chart && liveStream === null) {
+              onError(pollError.message);
+            }
+          },
+        });
+        livePoller.start();
+
         if (import.meta.env.DEV) {
           registerChartDebugHandle(chartId, chart, liveStream);
         }
@@ -148,6 +222,7 @@ export function useChartDataFeed({
       unsubscribeBar: () => {
         liveStream?.close();
         liveStream = null;
+        stopLivePolling();
         unregisterChartDebugHandle(chartId);
       },
     };
@@ -158,6 +233,7 @@ export function useChartDataFeed({
     return () => {
       liveStream?.close();
       liveStream = null;
+      stopLivePolling();
       unregisterChartDebugHandle(chartId);
       loadGenerationRef.current += 1;
     };

@@ -39,6 +39,11 @@ describe('indicator calculations', () => {
     ]);
   });
 
+  it('calculates source-specific MA and EMA values', () => {
+    expect(calculateMA(data, 2, 'open')[1]).toBe((99 + 101) / 2);
+    expect(calculateEMA(data, 3, 'hl2')[0]).toBe((102 + 97) / 2);
+  });
+
   it('calculates EMA', () => {
     const ema = calculateEMA(data, 3);
 

@@ -151,14 +151,21 @@ async function loadFromDirectRest(
   interval: Interval,
   startTime?: number,
 ): Promise<ChartKlineLoadResult> {
-  const result = await provider.getKlinesWithSource({
-    market,
-    symbol,
-    interval,
-    startTime,
-    endTime: Date.now(),
-    limit: restInitialPageLimitByMarket[market],
-  });
+  const result = await withTimeout(
+    provider.getKlinesWithSource(
+      {
+        market,
+        symbol,
+        interval,
+        startTime,
+        endTime: Date.now(),
+        limit: restInitialPageLimitByMarket[market],
+      },
+      { allowPublicData: false },
+    ),
+    8_000,
+    'Direct K-line request',
+  );
 
   await indexedDbKlineCache.writeKlines(
     { market, symbol, interval },
@@ -329,15 +336,19 @@ export async function loadEarlierChartKlines(
   }
 
   try {
-    const directResult = await provider.getKlinesWithSource(
-      {
-        market,
-        symbol,
-        interval,
-        endTime: beforeOpenTime - 1,
-        limit: restInitialPageLimitByMarket[market],
-      },
-      { allowPublicData: false },
+    const directResult = await withTimeout(
+      provider.getKlinesWithSource(
+        {
+          market,
+          symbol,
+          interval,
+          endTime: beforeOpenTime - 1,
+          limit: restInitialPageLimitByMarket[market],
+        },
+        { allowPublicData: false },
+      ),
+      8_000,
+      'Earlier K-line request',
     );
     const directRows = directResult.klines;
 
