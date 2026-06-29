@@ -1,5 +1,12 @@
 # Development Guide
 
+This document describes the legacy React/Electron/Web implementation kept as migration reference. For the active `perf/tauri-rust-rewrite` branch, use:
+
+1. [`tauri-rust-architecture.md`](./tauri-rust-architecture.md)
+2. [`tauri-rust-mvp-migration.md`](./tauri-rust-mvp-migration.md)
+3. [`performance-benchmark.md`](./performance-benchmark.md)
+4. [`tauri-release-plan.md`](./tauri-release-plan.md)
+
 ## English
 
 KLineForge is developed against the authoritative product scope in [`../KLINEFORGE_GOAL.md`](../KLINEFORGE_GOAL.md). The MVP is a pure frontend application: React renders the shell and controls, KLineCharts renders candles on Canvas, and IndexedDB stores local user data and K-line cache.

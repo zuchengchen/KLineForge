@@ -4,6 +4,47 @@ Open-source crypto charting, indicators and multi-timeframe analysis platform.
 
 开源的加密货币看盘、画图与自定义指标平台。
 
+## Tauri/Rust Performance Rewrite
+
+The `perf/tauri-rust-rewrite` branch is a `v0.1.0-tauri` prerelease rewrite focused on extreme desktop performance. It replaces the old Electron/Web-first runtime with Tauri, Rust, Tokio, SQLx/SQLite, Solid and Lightweight Charts.
+
+Current branch documentation:
+
+1. [`docs/tauri-rust-architecture.md`](./docs/tauri-rust-architecture.md)
+2. [`docs/tauri-rust-mvp-migration.md`](./docs/tauri-rust-mvp-migration.md)
+3. [`docs/performance-benchmark.md`](./docs/performance-benchmark.md)
+4. [`docs/tauri-release-plan.md`](./docs/tauri-release-plan.md)
+
+Primary development commands on this branch:
+
+```bash
+npm install
+npm run tauri:dev
+npm run typecheck
+npm run lint
+npm run test
+npm run rust:fmt
+npm run rust:clippy
+npm run rust:test
+npm run benchmark:real
+npm run prepare:chart-dataset:100k
+npm run prepare:chart-dataset:1m
+npm run verify:large-chart:100k
+npm run verify:large-chart:1m
+```
+
+Latest local performance evidence on this branch:
+
+1. 100,000 real Binance Public Data `BTCUSDT` USD-M `1m` rows: full dual-chart interaction, indicators, horizontal-line drawing, PNG export and CSV export passed.
+2. 1,000,000 real Binance Public Data `BTCUSDT` USD-M `1m` rows: dual-chart basic browsing passed with LOD/downsampling to 142,858 rendered candles per pane.
+3. `npm run tauri:build` builds the release binary at `src-tauri/target/release/klineforge`.
+
+The old React/Electron implementation has been moved to `legacy-src/` as a migration reference. Old IndexedDB/localStorage data is not migrated into the new SQLite store on this branch.
+
+## Legacy Main-Branch Notes
+
+The following sections describe the previous React/Electron/Web MVP preserved under `legacy-src/`. They remain useful as migration reference only and are not the active architecture on `perf/tauri-rust-rewrite`.
+
 KLineForge is a desktop-first, pure frontend crypto charting application for Binance Spot and Binance USD-M Futures public market data. The MVP focuses on local charting, drawing, built-in indicators, multi-timeframe review and local K-line caching. It does not place orders, manage API keys or connect to a user account.
 
 KLineForge 是一个桌面端优先的纯前端加密货币看盘应用，面向 Binance 现货和 U 本位合约公开行情。MVP 聚焦本地看盘、画图、内置指标、多周期分析和本地 K 线缓存，不做下单、API Key 管理或账号系统。

@@ -2,8 +2,15 @@ node_modules
 dist
 dist-electron
 release
+src-tauri/target
+src-tauri/gen
 .vite
 coverage
+artifacts/performance/*.json
+artifacts/performance/*.csv
+artifacts/performance/*.zip
+artifacts/performance/*.sqlite3
+artifacts/performance/*.png
 *.local
 *.log
 npm-debug.log*

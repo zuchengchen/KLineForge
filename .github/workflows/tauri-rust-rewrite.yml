@@ -1,0 +1,82 @@
+name: Tauri Rust Rewrite
+
+on:
+  push:
+    branches:
+      - perf/tauri-rust-rewrite
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Frontend typecheck
+        run: npm run typecheck
+
+      - name: Frontend lint
+        run: npm run lint
+
+      - name: Frontend tests
+        run: npm run test
+
+      - name: Rust format
+        run: npm run rust:fmt
+
+      - name: Rust clippy
+        run: npm run rust:clippy
+
+      - name: Rust tests
+        run: npm run rust:test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri release binary
+        run: npm run tauri:build
+
+      - name: Real-data benchmark
+        run: npm run prepare:chart-dataset:100k
+
+      - name: Spot and USD-M market-data smoke
+        run: npm run verify:market-data
+
+      - name: Start production preview
+        run: |
+          npm run preview -- --port 4173 > /tmp/klineforge-preview.log 2>&1 &
+          npx wait-on http://127.0.0.1:4173/
+
+      - name: Render smoke
+        run: npm run verify:render -- http://127.0.0.1:4173/
+
+      - name: 100k large-chart interaction smoke
+        run: npm run verify:large-chart:100k
+
+      - name: Upload performance artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-artifacts
+          path: artifacts/performance/

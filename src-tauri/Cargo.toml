@@ -1,0 +1,48 @@
+[package]
+name = "klineforge"
+version = "0.1.0-tauri"
+description = "Tauri/Rust rewrite of KLineForge for high-performance local charting."
+authors = ["KLineForge contributors"]
+edition = "2024"
+rust-version = "1.88"
+default-run = "klineforge"
+
+[lib]
+name = "klineforge_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "klineforge-benchmark"
+path = "src/bin/benchmark.rs"
+
+[[bin]]
+name = "klineforge-market-smoke"
+path = "src/bin/market_smoke.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "serde"] }
+futures-util = "0.3.31"
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = { version = "1.39.0", features = ["serde-with-str"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "sqlite", "chrono", "migrate"] }
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-dialog = "2.4.1"
+tauri-plugin-fs = "2.4.4"
+tauri-plugin-opener = "2.5.0"
+tauri-plugin-shell = "2.3.1"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "time"] }
+tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+url = "2.5.7"
+zip = { version = "5.0.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"

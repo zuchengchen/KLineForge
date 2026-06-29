@@ -1,77 +1,56 @@
 {
   "name": "klineforge",
-  "version": "0.0.0",
+  "version": "0.1.0-tauri",
   "private": true,
   "type": "module",
   "desktopName": "KLineForge",
-  "main": "dist-electron/electron/main.cjs",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc -b && vite build",
-    "desktop:dev": "concurrently -k -s first -n vite,electron \"npm:dev -- --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on tcp:127.0.0.1:5173 && npm run desktop:compile && cross-env KLINEFORGE_DESKTOP_DEV=true VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "desktop:dev:safe": "cross-env KLINEFORGE_DISABLE_GPU=true npm run desktop:dev",
-    "desktop:compile": "tsc -p tsconfig.electron.json",
-    "desktop:build": "npm run typecheck && vite build && npm run desktop:compile",
-    "desktop:pack": "npm run desktop:build && electron-builder --dir",
-    "desktop:dist": "npm run desktop:build && electron-builder",
+    "preview": "vite preview --host 127.0.0.1",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build --no-bundle",
+    "tauri:bundle": "tauri build",
+    "desktop:dev": "npm run tauri:dev",
+    "desktop:build": "npm run tauri:build",
     "lint": "eslint .",
-    "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -b"
-  },
-  "build": {
-    "appId": "dev.klineforge.app",
-    "productName": "KLineForge",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*",
-      "package.json"
-    ],
-    "linux": {
-      "syncDesktopName": true,
-      "target": [
-        "AppImage"
-      ],
-      "category": "Finance"
-    }
+    "typecheck": "tsc -b",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features",
+    "benchmark:real": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --output artifacts/performance/latest-benchmark.json",
+    "benchmark:archive:100k": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 100000 --output artifacts/performance/archive-100k-benchmark.json",
+    "benchmark:archive:1m": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 1000000 --output artifacts/performance/archive-1m-benchmark.json",
+    "verify:market-data": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-market-smoke -- --output artifacts/performance/market-data-smoke.json",
+    "prepare:chart-dataset:100k": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 100000 --with-indicators --output artifacts/performance/archive-100k-benchmark.json --chart-dataset-output artifacts/performance/chart-dataset-100k.json",
+    "prepare:chart-dataset:1m": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 1000000 --output artifacts/performance/archive-1m-benchmark.json --chart-dataset-output artifacts/performance/chart-dataset-1m.json",
+    "verify:render": "node scripts/verify-tauri-render.mjs",
+    "verify:large-chart:100k": "node scripts/verify-large-chart-interaction.mjs http://127.0.0.1:4173/ 100000",
+    "verify:large-chart:1m": "node scripts/verify-large-chart-interaction.mjs http://127.0.0.1:4173/ 1000000"
   },
   "dependencies": {
-    "dexie": "4.4.3",
-    "fflate": "^0.8.3",
-    "i18next": "26.3.1",
-    "klinecharts": "10.0.0-beta3",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
-    "react-i18next": "17.0.8",
-    "zustand": "5.0.14"
+    "@tauri-apps/api": "2.11.1",
+    "lightweight-charts": "5.2.0",
+    "solid-js": "1.9.13"
   },
   "devDependencies": {
-    "@eslint/js": "10.0.1",
-    "@playwright/test": "^1.60.0",
-    "@testing-library/jest-dom": "6.9.1",
-    "@testing-library/react": "16.3.2",
-    "@testing-library/user-event": "14.6.1",
-    "@types/node": "25.9.2",
-    "@types/react": "19.2.17",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
-    "concurrently": "^10.0.3",
-    "cross-env": "^10.1.0",
-    "electron": "^42.4.0",
-    "electron-builder": "^26.15.2",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.57.0",
+    "@tauri-apps/cli": "2.11.4",
+    "@types/node": "^26.0.1",
+    "esbuild": "^0.28.1",
     "eslint": "10.4.1",
-    "eslint-plugin-react-hooks": "7.1.1",
-    "eslint-plugin-react-refresh": "0.5.2",
-    "fake-indexeddb": "^6.2.5",
     "globals": "17.6.0",
     "jsdom": "29.1.1",
     "typescript": "6.0.3",
     "typescript-eslint": "8.61.0",
     "vite": "8.0.16",
+    "vite-plugin-solid": "2.11.12",
     "vitest": "4.1.8",
     "wait-on": "^9.0.10"
+  },
+  "overrides": {
+    "undici": "7.28.0"
   }
 }

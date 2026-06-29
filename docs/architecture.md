@@ -1,5 +1,7 @@
 # Architecture
 
+This document describes the legacy React/Electron/Web architecture kept as migration reference. The active Tauri/Rust/Solid/SQLite architecture for this branch is documented in [`tauri-rust-architecture.md`](./tauri-rust-architecture.md).
+
 ## English
 
 KLineForge is a pure frontend charting application with strict separation between UI, market data access, chart rendering, local persistence, cache queue, indicators, drawings and export/import.

@@ -1,16 +1,11 @@
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import './i18n/i18n';
-import { App } from './app/App';
+import { render } from 'solid-js/web';
+import { App } from './App';
+import './styles/app.css';
 
-const rootElement = document.getElementById('root');
+const root = document.getElementById('root');
 
-if (!rootElement) {
-  throw new Error('Root element not found');
+if (!root) {
+  throw new Error('KLineForge root element was not found.');
 }
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+render(() => <App />, root);
