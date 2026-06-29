@@ -1,5 +1,6 @@
 use std::{path::PathBuf, time::Instant};
 
+use anyhow::Context;
 use futures_util::StreamExt;
 use klineforge_lib::{
     binance::{BinanceClient, parse_ws_kline},
@@ -15,6 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     let output = parse_output_arg(&args);
+    let allow_live_rest_fallback = env_flag("KLINEFORGE_MARKET_SMOKE_ALLOW_LIVE_REST_FALLBACK");
     let client = BinanceClient::new();
     let mut checks = Vec::new();
 
@@ -70,15 +72,44 @@ async fn main() -> anyhow::Result<()> {
         });
 
         let live_start = Instant::now();
-        let live = receive_live_kline(&client, market).await?;
+        let live = match receive_live_kline(&client, market).await {
+            Ok(live) => LiveKlineCheck {
+                ok: true,
+                probe: live,
+                note_prefix: None,
+            },
+            Err(error) if allow_live_rest_fallback => {
+                let fallback = receive_latest_rest_kline(&client, market)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "live WebSocket probe failed and REST fallback also failed: {error}"
+                        )
+                    })?;
+
+                LiveKlineCheck {
+                    ok: true,
+                    probe: fallback,
+                    note_prefix: Some(format!(
+                        "CI REST fallback after WebSocket probe failure: {}",
+                        truncate_note(&error.to_string())
+                    )),
+                }
+            }
+            Err(error) => return Err(error.context("live WebSocket kline probe failed")),
+        };
         checks.push(MarketSmokeCheck {
             market,
             capability: "live-kline",
-            ok: true,
+            ok: live.ok,
             rows: Some(1),
             elapsed_ms: live_start.elapsed().as_millis(),
-            source: Some(live.source),
-            note: Some(format!("time={} close={}", live.open_time, live.close)),
+            source: Some(live.probe.source),
+            note: Some(format_live_note(
+                live.note_prefix.as_deref(),
+                live.probe.open_time,
+                &live.probe.close,
+            )),
         });
     }
 
@@ -91,12 +122,44 @@ async fn main() -> anyhow::Result<()> {
 
     write_report(&output, &report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
+
+    if let Some(failed) = report.checks.iter().find(|check| !check.ok) {
+        anyhow::bail!(
+            "market smoke failed for {} {}",
+            failed.market.as_str(),
+            failed.capability
+        );
+    }
+
     Ok(())
 }
 
 async fn receive_live_kline(
     client: &BinanceClient,
     market: Market,
+) -> anyhow::Result<LiveKlineProbe> {
+    let attempts = env_usize("KLINEFORGE_MARKET_SMOKE_LIVE_ATTEMPTS", 2).max(1);
+    let timeout_secs = env_u64("KLINEFORGE_MARKET_SMOKE_LIVE_TIMEOUT_SECS", 20).max(1);
+    let mut errors = Vec::new();
+
+    for attempt in 1..=attempts {
+        match receive_live_kline_once(client, market, timeout_secs).await {
+            Ok(probe) => return Ok(probe),
+            Err(error) => errors.push(format!("attempt {attempt}/{attempts}: {error}")),
+        }
+
+        if attempt < attempts {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+
+    anyhow::bail!("{}", errors.join("; "))
+}
+
+async fn receive_live_kline_once(
+    client: &BinanceClient,
+    market: Market,
+    timeout_secs: u64,
 ) -> anyhow::Result<LiveKlineProbe> {
     let request = LiveStreamRequest {
         chart_id: ChartId::Left,
@@ -105,7 +168,7 @@ async fn receive_live_kline(
         interval: "1m".to_string(),
     };
     let mut stream = client.connect_kline_stream(&request).await?;
-    let message = timeout(Duration::from_secs(30), async {
+    let message = timeout(Duration::from_secs(timeout_secs), async {
         while let Some(message) = stream.next().await {
             let message = message?;
 
@@ -125,6 +188,32 @@ async fn receive_live_kline(
     .await??;
 
     Ok(message)
+}
+
+async fn receive_latest_rest_kline(
+    client: &BinanceClient,
+    market: Market,
+) -> anyhow::Result<LiveKlineProbe> {
+    let request = KlineRequest {
+        market,
+        symbol: "BTCUSDT".to_string(),
+        interval: "1m".to_string(),
+        limit: Some(1),
+        start_time: None,
+        end_time: None,
+    };
+    let kline = client
+        .get_klines(&request)
+        .await?
+        .into_iter()
+        .next()
+        .context("REST fallback returned no kline rows")?;
+
+    Ok(LiveKlineProbe {
+        source: "binance-rest-ci-live-fallback".to_string(),
+        open_time: kline.open_time,
+        close: kline.close,
+    })
 }
 
 fn parse_output_arg(args: &[String]) -> PathBuf {
@@ -148,6 +237,12 @@ struct LiveKlineProbe {
     close: String,
 }
 
+struct LiveKlineCheck {
+    ok: bool,
+    probe: LiveKlineProbe,
+    note_prefix: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MarketSmokeReport {
@@ -167,4 +262,41 @@ struct MarketSmokeCheck {
     elapsed_ms: u128,
     source: Option<String>,
     note: Option<String>,
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn format_live_note(prefix: Option<&str>, open_time: i64, close: &str) -> String {
+    match prefix {
+        Some(prefix) => format!("{prefix}; time={open_time} close={close}"),
+        None => format!("time={open_time} close={close}"),
+    }
+}
+
+fn truncate_note(value: &str) -> String {
+    const MAX_NOTE_LEN: usize = 220;
+
+    if value.len() <= MAX_NOTE_LEN {
+        return value.to_string();
+    }
+
+    format!("{}...", &value[..MAX_NOTE_LEN])
 }

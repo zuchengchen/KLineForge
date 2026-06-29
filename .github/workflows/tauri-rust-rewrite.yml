@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CHROMIUM_PATH: /usr/bin/google-chrome
+      KLINEFORGE_MARKET_SMOKE_ALLOW_LIVE_REST_FALLBACK: "1"
+      KLINEFORGE_MARKET_SMOKE_LIVE_ATTEMPTS: "2"
+      KLINEFORGE_MARKET_SMOKE_LIVE_TIMEOUT_SECS: "15"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v5

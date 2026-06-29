@@ -90,6 +90,8 @@ Spot and USD-M market data are verified through the Rust backend client:
 npm run verify:market-data
 ```
 
+Local verification requires live Binance WebSocket K-lines to succeed. CI sets `KLINEFORGE_MARKET_SMOKE_ALLOW_LIVE_REST_FALLBACK=1`, so a transient WebSocket failure can fall back to the latest Binance REST K-line after retrying; the artifact records this as `binance-rest-ci-live-fallback` with the WebSocket error in the note. REST history, market info and symbol checks remain required in both environments.
+
 Latest local result from June 29, 2026:
 
 ```text
