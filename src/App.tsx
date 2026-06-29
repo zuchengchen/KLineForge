@@ -1,9 +1,10 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from 'solid-js';
 import { ChartPane, type ChartPaneMetrics } from './components/ChartPane';
 import {
   addWatchlistSymbol,
   clearCache,
   deleteDrawing,
+  deleteIndicatorInstance,
   exportConfig,
   exportKlinesCsv,
   getCacheSummary,
@@ -13,14 +14,17 @@ import {
   getIndicators,
   getLeaderboards,
   getMarketInfo,
+  getPreviewIndicatorDebugState,
   getSettings,
   getSymbols,
   getWatchlist,
   importConfig,
+  listIndicatorInstances,
   listenLiveKlineUpdates,
   removeWatchlistSymbol,
   reorderWatchlist,
   runPerformanceBenchmark,
+  saveIndicatorInstance,
   saveSettings,
   saveDrawing,
   startLiveStream,
@@ -35,7 +39,13 @@ import type {
   ChartId,
   ChartPoint,
   DrawingObject,
+  IndicatorInstance,
+  IndicatorKind,
+  IndicatorLineStyle,
+  IndicatorParams,
+  IndicatorStyle,
   IndicatorSettings,
+  IndicatorScope,
   KlineRequest,
 } from './services/types';
 import type { LogicalRange } from 'lightweight-charts';
@@ -86,6 +96,12 @@ type CrosshairSync = { source: ChartId; time: number; price: number } | null;
 type RangeSync = { source: ChartId; range: LogicalRange } | null;
 type ChartActions = Partial<Record<ChartId, { exportPng: () => string }>>;
 type ChartMetrics = Partial<Record<ChartId, ChartPaneMetrics>>;
+type IndicatorEditorState = {
+  mode: 'add' | 'edit';
+  instance: IndicatorInstance;
+  periodsText: string;
+  error: string;
+};
 
 export function App() {
   const initialRows = readInitialPerfRows();
@@ -110,6 +126,9 @@ export function App() {
   const [rangeSync, setRangeSync] = createSignal<RangeSync>(null);
   const [chartActions, setChartActions] = createSignal<ChartActions>({});
   const [indicatorSettings, setIndicatorSettings] = createSignal<IndicatorSettings>(defaultIndicatorSettings);
+  const [indicatorConfigChart, setIndicatorConfigChart] = createSignal<ChartId>('left');
+  const [indicatorEditor, setIndicatorEditor] = createSignal<IndicatorEditorState | null>(null);
+  const [lastIndicatorDataRefresh, setLastIndicatorDataRefresh] = createSignal<Partial<Record<ChartId, string>>>({});
   const [drawingType, setDrawingType] = createSignal<DrawingType>('horizontal-line');
   const t = createMemo(() => createTranslator(language()));
 
@@ -171,19 +190,35 @@ export function App() {
     interval: rightInterval(),
     limit: chartLimit(),
   }));
-  const leftIndicatorRequest = createMemo<KlineRequest>(() => ({
-    ...leftRequest(),
-    limit: chartLimit() > 200_000 ? 0 : chartLimit(),
+  const leftIndicatorRequest = createMemo(() => ({
+    chartId: 'left' as const,
+    request: {
+      ...leftRequest(),
+      limit: chartLimit() > 200_000 ? 0 : chartLimit(),
+    },
+    maxRows: 200_000,
   }));
-  const rightIndicatorRequest = createMemo<KlineRequest>(() => ({
-    ...rightRequest(),
-    limit: chartLimit() > 200_000 ? 0 : chartLimit(),
+  const rightIndicatorRequest = createMemo(() => ({
+    chartId: 'right' as const,
+    request: {
+      ...rightRequest(),
+      limit: chartLimit() > 200_000 ? 0 : chartLimit(),
+    },
+    maxRows: 200_000,
   }));
   const [leftData, { refetch: refetchLeft }] = createResource(leftRequest, getChartData);
   const [rightData, { refetch: refetchRight }] = createResource(rightRequest, getChartData);
   const [leftIndicators, { refetch: refetchLeftIndicators }] = createResource(leftIndicatorRequest, getIndicators);
   const [rightIndicators, { refetch: refetchRightIndicators }] = createResource(rightIndicatorRequest, getIndicators);
   const [cacheSummary, { refetch: refetchCacheSummary }] = createResource(getCacheSummary);
+  const indicatorScope = createMemo<IndicatorScope>(() => ({
+    chartId: indicatorConfigChart(),
+    interval: indicatorConfigChart() === 'left' ? leftInterval() : rightInterval(),
+  }));
+  const [indicatorInstances, { refetch: refetchIndicatorInstances }] = createResource(
+    indicatorScope,
+    listIndicatorInstances,
+  );
   const leftDrawingQuery = createMemo(() => ({
     market: market(),
     symbol: activeSymbol(),
@@ -212,11 +247,29 @@ export function App() {
   });
 
   createEffect(() => {
-    setLeftPoints(leftData()?.points ?? []);
+    const data = leftData();
+    setLeftPoints(data?.points ?? []);
+
+    if (data?.points.length) {
+      const key = `${chartDataResetKey(leftRequest())}:${data.points.length}:${data.source}`;
+      if (lastIndicatorDataRefresh().left !== key) {
+        setLastIndicatorDataRefresh((current) => ({ ...current, left: key }));
+        void refetchLeftIndicators();
+      }
+    }
   });
 
   createEffect(() => {
-    setRightPoints(rightData()?.points ?? []);
+    const data = rightData();
+    setRightPoints(data?.points ?? []);
+
+    if (data?.points.length) {
+      const key = `${chartDataResetKey(rightRequest())}:${data.points.length}:${data.source}`;
+      if (lastIndicatorDataRefresh().right !== key) {
+        setLastIndicatorDataRefresh((current) => ({ ...current, right: key }));
+        void refetchRightIndicators();
+      }
+    }
   });
 
   createEffect(() => {
@@ -290,6 +343,14 @@ export function App() {
       rightCached: rightData()?.cached,
       metrics: chartMetrics(),
     });
+  });
+
+  createEffect(() => {
+    const _scope = indicatorScope();
+    const _instances = indicatorInstances();
+    const _left = leftIndicators();
+    const _right = rightIndicators();
+    publishIndicatorState();
   });
 
   createEffect((previousKey: string | undefined) => {
@@ -441,8 +502,19 @@ export function App() {
 
     setOperationStatus('Importing config...');
     const result = await importConfig(await file.text());
-    setOperationStatus(`Config imported: ${result.watchlistCount} symbols, ${result.drawingCount} drawings`);
-    await Promise.all([refetchSettings(), refetchWatchlist(), refetchLeft(), refetchRight(), refetchCacheSummary()]);
+    setOperationStatus(
+      `Config imported: ${result.watchlistCount} symbols, ${result.drawingCount} drawings, ${result.indicatorCount} indicators`,
+    );
+    await Promise.all([
+      refetchSettings(),
+      refetchWatchlist(),
+      refetchLeft(),
+      refetchRight(),
+      refetchLeftIndicators(),
+      refetchRightIndicators(),
+      refetchIndicatorInstances(),
+      refetchCacheSummary(),
+    ]);
   };
 
   const clearCurrentCache = async () => {
@@ -513,14 +585,74 @@ export function App() {
     await (drawing.chartId === 'left' ? refetchLeftDrawings() : refetchRightDrawings());
   };
 
-  const updateIndicatorSetting = async (key: keyof IndicatorSettings, value: boolean) => {
-    const next = {
-      ...indicatorSettings(),
-      [key]: value,
-    };
+  const refreshIndicatorScope = async (chartId = indicatorConfigChart()) => {
+    await Promise.all([
+      refetchIndicatorInstances(),
+      chartId === 'left' ? refetchLeftIndicators() : refetchRightIndicators(),
+    ]);
+  };
 
-    setIndicatorSettings(next);
-    await persistSettings({ indicators: next });
+  const openAddIndicator = () => {
+    const scope = indicatorScope();
+    const params: IndicatorParams = { kind: 'ma', periods: [5, 10, 30] };
+    const instance = createIndicatorDraft({
+      chartId: scope.chartId,
+      interval: scope.interval,
+      params,
+      position: indicatorInstances()?.length ?? 0,
+    });
+
+    setIndicatorEditor({
+      mode: 'add',
+      instance,
+      periodsText: '5,10,30',
+      error: '',
+    });
+  };
+
+  const openEditIndicator = (instance: IndicatorInstance) => {
+    setIndicatorEditor({
+      mode: 'edit',
+      instance: cloneIndicatorInstance(instance),
+      periodsText: periodsTextForParams(instance.params),
+      error: '',
+    });
+  };
+
+  const saveIndicatorEditor = async () => {
+    const editor = indicatorEditor();
+
+    if (!editor) {
+      return;
+    }
+
+    try {
+      const instance = normalizeEditorInstance(editor);
+      await saveIndicatorInstance(instance);
+      setIndicatorEditor(null);
+      setOperationStatus(`Indicator saved: ${indicatorName(instance.params)}`);
+      await refreshIndicatorScope(instance.chartId);
+    } catch (error) {
+      setIndicatorEditor({
+        ...editor,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const toggleIndicatorInstance = async (instance: IndicatorInstance, enabled: boolean) => {
+    await saveIndicatorInstance({
+      ...instance,
+      enabled,
+    });
+    setOperationStatus(`${enabled ? 'Indicator shown' : 'Indicator hidden'}: ${instance.name}`);
+    await refreshIndicatorScope(instance.chartId);
+  };
+
+  const removeIndicatorInstance = async (instance: IndicatorInstance) => {
+    await deleteIndicatorInstance(instance.id);
+    setOperationStatus(`Indicator deleted: ${instance.name}`);
+    await refreshIndicatorScope(instance.chartId);
   };
 
   const updateChartLimit = async (value: number) => {
@@ -625,19 +757,84 @@ export function App() {
 
         <section class="panel">
           <h2>{t()('indicators')}</h2>
-          <IndicatorToggle label="Volume" checked={indicatorSettings().volume} onChange={(value) => void updateIndicatorSetting('volume', value)} />
-          <IndicatorToggle label="MA" checked={indicatorSettings().ma} onChange={(value) => void updateIndicatorSetting('ma', value)} />
-          <IndicatorToggle label="EMA" checked={indicatorSettings().ema} onChange={(value) => void updateIndicatorSetting('ema', value)} />
-          <IndicatorToggle label="BOLL" checked={indicatorSettings().boll} onChange={(value) => void updateIndicatorSetting('boll', value)} />
-          <IndicatorToggle label="MACD" checked={indicatorSettings().macd} onChange={(value) => void updateIndicatorSetting('macd', value)} />
-          <IndicatorToggle label="RSI" checked={indicatorSettings().rsi} onChange={(value) => void updateIndicatorSetting('rsi', value)} />
-          <IndicatorToggle label="ATR" checked={indicatorSettings().atr} onChange={(value) => void updateIndicatorSetting('atr', value)} />
-          <IndicatorToggle label="KDJ" checked={indicatorSettings().kdj} onChange={(value) => void updateIndicatorSetting('kdj', value)} />
-          <IndicatorToggle
-            label="Supertrend"
-            checked={indicatorSettings().supertrend}
-            onChange={(value) => void updateIndicatorSetting('supertrend', value)}
-          />
+          <div class="indicator-scope">
+            <div class="segmented">
+              <button
+                classList={{ active: indicatorConfigChart() === 'left' }}
+                onClick={() => setIndicatorConfigChart('left')}
+                data-indicator-scope="left"
+              >
+                Left
+              </button>
+              <button
+                classList={{ active: indicatorConfigChart() === 'right' }}
+                onClick={() => setIndicatorConfigChart('right')}
+                data-indicator-scope="right"
+              >
+                Right
+              </button>
+            </div>
+            <span>
+              {indicatorScope().chartId} · {indicatorScope().interval}
+            </span>
+          </div>
+          <Show when={chartLimit() > 200_000}>
+            <p class="indicator-skip" data-indicator-skip>
+              Indicators skipped above 200,000 rows.
+            </p>
+          </Show>
+          <div class="indicator-list" data-indicator-list>
+            <For each={indicatorInstances() ?? []} fallback={<span class="indicator-empty">No indicators</span>}>
+              {(instance) => (
+                <div class="indicator-row" data-indicator-row={instance.name}>
+                  <button
+                    class="indicator-row__name"
+                    classList={{ muted: !instance.enabled }}
+                    onClick={() => openEditIndicator(instance)}
+                  >
+                    {instance.name}
+                  </button>
+                  <button
+                    title={instance.enabled ? 'Hide' : 'Show'}
+                    aria-label={instance.enabled ? `Hide ${instance.name}` : `Show ${instance.name}`}
+                    onClick={() => void toggleIndicatorInstance(instance, !instance.enabled)}
+                    data-indicator-toggle={instance.name}
+                  >
+                    {instance.enabled ? '●' : '○'}
+                  </button>
+                  <button
+                    title="Edit"
+                    aria-label={`Edit ${instance.name}`}
+                    onClick={() => openEditIndicator(instance)}
+                    data-indicator-edit={instance.name}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    title="Delete"
+                    aria-label={`Delete ${instance.name}`}
+                    onClick={() => void removeIndicatorInstance(instance)}
+                    data-indicator-delete={instance.name}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+          <button
+            class="indicator-add"
+            disabled={(indicatorInstances()?.length ?? 0) >= 20}
+            onClick={openAddIndicator}
+            data-indicator-add
+          >
+            Add indicator
+          </button>
+          <Show when={(indicatorInstances()?.length ?? 0) >= 20}>
+            <p class="indicator-skip" data-indicator-limit>
+              Maximum 20 indicators in this chart and interval.
+            </p>
+          </Show>
         </section>
 
         <section class="panel">
@@ -696,8 +893,9 @@ export function App() {
           <ChartPane
             title={`${activeSymbol()} ${leftInterval()}`}
             points={leftPoints}
-            indicators={() => leftIndicators() ?? []}
-            indicatorSettings={indicatorSettings}
+            indicators={() => leftIndicators()?.series ?? []}
+            indicatorInstances={() => leftIndicators()?.instances ?? []}
+            indicatorStatus={() => leftIndicators()?.skippedReason}
             drawings={() => leftDrawings() ?? []}
             liveStatus={() => liveStatus().left}
             resetKey={() => chartDataResetKey(leftRequest())}
@@ -722,8 +920,9 @@ export function App() {
           <ChartPane
             title={`${activeSymbol()} ${rightInterval()}`}
             points={rightPoints}
-            indicators={() => rightIndicators() ?? []}
-            indicatorSettings={indicatorSettings}
+            indicators={() => rightIndicators()?.series ?? []}
+            indicatorInstances={() => rightIndicators()?.instances ?? []}
+            indicatorStatus={() => rightIndicators()?.skippedReason}
             drawings={() => rightDrawings() ?? []}
             liveStatus={() => liveStatus().right}
             resetKey={() => chartDataResetKey(rightRequest())}
@@ -848,6 +1047,16 @@ export function App() {
           </section>
         </footer>
       </section>
+      <Show when={indicatorEditor()}>
+        {(editor) => (
+          <IndicatorEditorDialog
+            editor={editor()}
+            onChange={(next) => setIndicatorEditor(next)}
+            onClose={() => setIndicatorEditor(null)}
+            onSave={() => void saveIndicatorEditor()}
+          />
+        )}
+      </Show>
     </main>
   );
 }
@@ -933,13 +1142,542 @@ function IntervalSelect(props: { label: string; value: string; onChange: (value:
   );
 }
 
-function IndicatorToggle(props: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+function IndicatorEditorDialog(props: {
+  editor: IndicatorEditorState;
+  onChange: (editor: IndicatorEditorState) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const instance = () => props.editor.instance;
+  const params = () => instance().params;
+  const updateParams = (params: IndicatorParams) => {
+    props.onChange({
+      ...props.editor,
+      periodsText: params.kind === 'ma' || params.kind === 'ema' ? params.periods.join(',') : props.editor.periodsText,
+      instance: {
+        ...instance(),
+        params,
+        kind: params.kind,
+        name: indicatorName(params),
+        styles: normalizeEditorStyles(params, instance().styles),
+      },
+      error: '',
+    });
+  };
+  const updatePeriodsText = (periodsText: string) => {
+    const currentParams = params();
+    const nextParams: IndicatorParams =
+      currentParams.kind === 'ma' || currentParams.kind === 'ema'
+        ? {
+            ...currentParams,
+            periods: parsePeriodsLenient(periodsText),
+          }
+        : currentParams;
+
+    props.onChange({
+      ...props.editor,
+      periodsText,
+      instance: {
+        ...instance(),
+        params: nextParams,
+      },
+      error: '',
+    });
+  };
+  const updateStyle = (key: string, patch: Partial<IndicatorStyle>) => {
+    props.onChange({
+      ...props.editor,
+      instance: {
+        ...instance(),
+        styles: {
+          ...instance().styles,
+          [key]: {
+            ...instance().styles[key],
+            ...patch,
+          },
+        },
+      },
+      error: '',
+    });
+  };
+
   return (
-    <label class="toggle-row">
-      <span>{props.label}</span>
-      <input type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.currentTarget.checked)} />
+    <div class="modal-backdrop" data-indicator-modal>
+      <div class="indicator-dialog" role="dialog" aria-modal="true">
+        <header>
+          <h2>{props.editor.mode === 'add' ? 'Add indicator' : 'Edit indicator'}</h2>
+          <button onClick={props.onClose} aria-label="Close indicator editor">
+            ×
+          </button>
+        </header>
+        <div class="indicator-dialog__body">
+          <label>
+            Type
+            <select
+              value={params().kind}
+              onChange={(event) => updateParams(defaultParamsForKind(event.currentTarget.value as IndicatorKind))}
+              data-indicator-kind
+            >
+              <For each={indicatorKinds}>{(kind) => <option value={kind}>{indicatorKindLabel(kind)}</option>}</For>
+            </select>
+          </label>
+          <label>
+            Name
+            <input value={indicatorName(params())} readOnly data-indicator-name />
+          </label>
+          <div class="indicator-param-grid">
+            <IndicatorParamFields
+              params={params()}
+              periodsText={props.editor.periodsText}
+              onPeriodsText={updatePeriodsText}
+              onParams={updateParams}
+            />
+          </div>
+          <section class="indicator-style-editor">
+            <h3>Style</h3>
+            <For each={seriesKeysForParams(params())}>
+              {(key) => (
+                <div class="indicator-style-row">
+                  <span>{key}</span>
+                  <input
+                    type="color"
+                    value={toColorInputValue(instance().styles[key]?.color ?? '#ffffff')}
+                    onInput={(event) => updateStyle(key, { color: event.currentTarget.value })}
+                    data-indicator-style-color={key}
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    max="5"
+                    value={instance().styles[key]?.lineWidth ?? 1}
+                    onInput={(event) => updateStyle(key, { lineWidth: Number(event.currentTarget.value) })}
+                    data-indicator-style-width={key}
+                  />
+                  <select
+                    value={instance().styles[key]?.lineStyle ?? 'solid'}
+                    onChange={(event) => updateStyle(key, { lineStyle: event.currentTarget.value as IndicatorLineStyle })}
+                    data-indicator-style-line={key}
+                  >
+                    <For each={lineStyles}>{(style) => <option value={style}>{style}</option>}</For>
+                  </select>
+                </div>
+              )}
+            </For>
+          </section>
+          <Show when={props.editor.error}>
+            <p class="indicator-error" data-indicator-error>
+              {props.editor.error}
+            </p>
+          </Show>
+        </div>
+        <footer>
+          <button onClick={props.onClose}>Cancel</button>
+          <button onClick={props.onSave} data-indicator-save>
+            Save
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function IndicatorParamFields(props: {
+  params: IndicatorParams;
+  periodsText: string;
+  onPeriodsText: (value: string) => void;
+  onParams: (params: IndicatorParams) => void;
+}) {
+  const numberInput = (label: string, value: number, onValue: (value: number) => void) => (
+    <label>
+      {label}
+      <input
+        type="number"
+        min="1"
+        max="500"
+        value={value}
+        onInput={(event) => onValue(Number(event.currentTarget.value))}
+        data-indicator-param={label}
+      />
     </label>
   );
+  const decimalInput = (label: string, value: number, onValue: (value: number) => void) => (
+    <label>
+      {label}
+      <input
+        type="number"
+        min="0.1"
+        max="20"
+        step="0.1"
+        value={value}
+        onInput={(event) => onValue(Number(event.currentTarget.value))}
+        data-indicator-param={label}
+      />
+    </label>
+  );
+
+  return (
+    <Switch>
+      <Match when={props.params.kind === 'volume'}>
+        <span class="indicator-param-note">Volume uses candle volume.</span>
+      </Match>
+      <Match when={props.params.kind === 'ma' || props.params.kind === 'ema'}>
+        <label>
+          Periods
+          <input
+            value={props.periodsText}
+            onInput={(event) => props.onPeriodsText(event.currentTarget.value)}
+            data-indicator-param="periods"
+          />
+        </label>
+      </Match>
+      <Match when={props.params.kind === 'boll'}>
+        {(() => {
+          const params = props.params as Extract<IndicatorParams, { kind: 'boll' }>;
+
+          return (
+            <>
+              {numberInput('period', params.period, (period) => props.onParams({ ...params, period }))}
+              {decimalInput('multiplier', params.multiplier, (multiplier) => props.onParams({ ...params, multiplier }))}
+            </>
+          );
+        })()}
+      </Match>
+      <Match when={props.params.kind === 'macd'}>
+        {(() => {
+          const params = props.params as Extract<IndicatorParams, { kind: 'macd' }>;
+
+          return (
+            <>
+              {numberInput('shortPeriod', params.shortPeriod, (shortPeriod) => props.onParams({ ...params, shortPeriod }))}
+              {numberInput('longPeriod', params.longPeriod, (longPeriod) => props.onParams({ ...params, longPeriod }))}
+              {numberInput('signalPeriod', params.signalPeriod, (signalPeriod) => props.onParams({ ...params, signalPeriod }))}
+            </>
+          );
+        })()}
+      </Match>
+      <Match when={props.params.kind === 'rsi'}>
+        {(() => {
+          const params = props.params as Extract<IndicatorParams, { kind: 'rsi' }>;
+
+          return numberInput('period', params.period, (period) => props.onParams({ ...params, period }));
+        })()}
+      </Match>
+      <Match when={props.params.kind === 'atr'}>
+        {(() => {
+          const params = props.params as Extract<IndicatorParams, { kind: 'atr' }>;
+
+          return numberInput('period', params.period, (period) => props.onParams({ ...params, period }));
+        })()}
+      </Match>
+      <Match when={props.params.kind === 'kdj'}>
+        {(() => {
+          const params = props.params as Extract<IndicatorParams, { kind: 'kdj' }>;
+
+          return (
+            <>
+              {numberInput('period', params.period, (period) => props.onParams({ ...params, period }))}
+              {numberInput('kSmoothing', params.kSmoothing, (kSmoothing) => props.onParams({ ...params, kSmoothing }))}
+              {numberInput('dSmoothing', params.dSmoothing, (dSmoothing) => props.onParams({ ...params, dSmoothing }))}
+            </>
+          );
+        })()}
+      </Match>
+      <Match when={props.params.kind === 'supertrend'}>
+        {(() => {
+          const params = props.params as Extract<IndicatorParams, { kind: 'supertrend' }>;
+
+          return (
+            <>
+              {numberInput('period', params.period, (period) => props.onParams({ ...params, period }))}
+              {decimalInput('multiplier', params.multiplier, (multiplier) => props.onParams({ ...params, multiplier }))}
+            </>
+          );
+        })()}
+      </Match>
+    </Switch>
+  );
+}
+
+const indicatorKinds: IndicatorKind[] = ['volume', 'ma', 'ema', 'boll', 'macd', 'rsi', 'atr', 'kdj', 'supertrend'];
+const lineStyles: IndicatorLineStyle[] = ['solid', 'dotted', 'dashed', 'large-dashed', 'sparse-dotted'];
+
+function createIndicatorDraft(params: {
+  chartId: ChartId;
+  interval: string;
+  params: IndicatorParams;
+  position: number;
+}): IndicatorInstance {
+  return {
+    id: `${params.chartId}-${params.interval}-${params.params.kind}-${Date.now()}`,
+    chartId: params.chartId,
+    interval: params.interval,
+    kind: params.params.kind,
+    name: indicatorName(params.params),
+    enabled: true,
+    position: params.position,
+    params: params.params,
+    styles: defaultStylesForParams(params.params),
+    updatedAt: 0,
+  };
+}
+
+function cloneIndicatorInstance(instance: IndicatorInstance): IndicatorInstance {
+  return JSON.parse(JSON.stringify(instance)) as IndicatorInstance;
+}
+
+function normalizeEditorInstance(editor: IndicatorEditorState): IndicatorInstance {
+  const params =
+    editor.instance.params.kind === 'ma' || editor.instance.params.kind === 'ema'
+      ? {
+          ...editor.instance.params,
+          periods: parsePeriodsStrict(editor.periodsText),
+        }
+      : editor.instance.params;
+
+  validateIndicatorParams(params);
+
+  return {
+    ...editor.instance,
+    kind: params.kind,
+    name: indicatorName(params),
+    params,
+    styles: normalizeEditorStyles(params, editor.instance.styles),
+  };
+}
+
+function defaultParamsForKind(kind: IndicatorKind): IndicatorParams {
+  switch (kind) {
+    case 'volume':
+      return { kind: 'volume' };
+    case 'ma':
+      return { kind: 'ma', periods: [5, 10, 30] };
+    case 'ema':
+      return { kind: 'ema', periods: [12, 26] };
+    case 'boll':
+      return { kind: 'boll', period: 20, multiplier: 2 };
+    case 'macd':
+      return { kind: 'macd', shortPeriod: 12, longPeriod: 26, signalPeriod: 9 };
+    case 'rsi':
+      return { kind: 'rsi', period: 14 };
+    case 'atr':
+      return { kind: 'atr', period: 14 };
+    case 'kdj':
+      return { kind: 'kdj', period: 9, kSmoothing: 3, dSmoothing: 3 };
+    case 'supertrend':
+      return { kind: 'supertrend', period: 10, multiplier: 3 };
+  }
+}
+
+export function indicatorName(params: IndicatorParams): string {
+  switch (params.kind) {
+    case 'volume':
+      return 'Volume';
+    case 'ma':
+      return `MA(${params.periods.join(',')})`;
+    case 'ema':
+      return `EMA(${params.periods.join(',')})`;
+    case 'boll':
+      return `BOLL(${params.period},${formatIndicatorNumber(params.multiplier)})`;
+    case 'macd':
+      return `MACD(${params.shortPeriod},${params.longPeriod},${params.signalPeriod})`;
+    case 'rsi':
+      return `RSI(${params.period})`;
+    case 'atr':
+      return `ATR(${params.period})`;
+    case 'kdj':
+      return `KDJ(${params.period},${params.kSmoothing},${params.dSmoothing})`;
+    case 'supertrend':
+      return `Supertrend(${params.period},${formatIndicatorNumber(params.multiplier)})`;
+  }
+}
+
+function indicatorKindLabel(kind: IndicatorKind) {
+  return kind === 'ma'
+    ? 'MA'
+    : kind === 'ema'
+      ? 'EMA'
+      : kind === 'boll'
+        ? 'BOLL'
+        : kind === 'macd'
+          ? 'MACD'
+          : kind === 'rsi'
+            ? 'RSI'
+            : kind === 'atr'
+              ? 'ATR'
+              : kind === 'kdj'
+                ? 'KDJ'
+                : kind === 'supertrend'
+                  ? 'Supertrend'
+                  : 'Volume';
+}
+
+function periodsTextForParams(params: IndicatorParams) {
+  return params.kind === 'ma' || params.kind === 'ema' ? params.periods.join(',') : '';
+}
+
+function parsePeriodsLenient(value: string) {
+  const parsed = value
+    .split(/[,\s]+/)
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isInteger(item) && item > 0);
+
+  return parsed.length > 0 ? parsed : [1];
+}
+
+function parsePeriodsStrict(value: string) {
+  const periods = value
+    .split(/[,\s]+/)
+    .map((item) => Number(item.trim()))
+    .filter((item) => item > 0);
+
+  if (periods.length < 1 || periods.length > 8 || periods.some((period) => !Number.isInteger(period))) {
+    throw new Error('periods must contain 1 to 8 integer values');
+  }
+
+  if (new Set(periods).size !== periods.length) {
+    throw new Error('periods must not contain duplicates');
+  }
+
+  periods.forEach((period) => validatePeriod(period, 'period'));
+
+  return periods;
+}
+
+function validateIndicatorParams(params: IndicatorParams) {
+  switch (params.kind) {
+    case 'volume':
+      return;
+    case 'ma':
+    case 'ema':
+      parsePeriodsStrict(params.periods.join(','));
+      return;
+    case 'boll':
+      validatePeriod(params.period, 'period');
+      validateMultiplier(params.multiplier, 'multiplier');
+      return;
+    case 'macd':
+      validatePeriod(params.shortPeriod, 'shortPeriod');
+      validatePeriod(params.longPeriod, 'longPeriod');
+      validatePeriod(params.signalPeriod, 'signalPeriod');
+      if (params.shortPeriod >= params.longPeriod) {
+        throw new Error('shortPeriod must be lower than longPeriod');
+      }
+      return;
+    case 'rsi':
+    case 'atr':
+      validatePeriod(params.period, 'period');
+      return;
+    case 'kdj':
+      validatePeriod(params.period, 'period');
+      validatePeriod(params.kSmoothing, 'kSmoothing');
+      validatePeriod(params.dSmoothing, 'dSmoothing');
+      return;
+    case 'supertrend':
+      validatePeriod(params.period, 'period');
+      validateMultiplier(params.multiplier, 'multiplier');
+      return;
+  }
+}
+
+function validatePeriod(value: number, label: string) {
+  if (!Number.isInteger(value) || value < 1 || value > 500) {
+    throw new Error(`${label} must be between 1 and 500`);
+  }
+}
+
+function validateMultiplier(value: number, label: string) {
+  if (!Number.isFinite(value) || value < 0.1 || value > 20) {
+    throw new Error(`${label} must be between 0.1 and 20`);
+  }
+}
+
+function normalizeEditorStyles(params: IndicatorParams, styles: Record<string, IndicatorStyle>) {
+  const defaults = defaultStylesForParams(params);
+  const normalized: Record<string, IndicatorStyle> = {};
+
+  for (const key of seriesKeysForParams(params)) {
+    const style = styles[key] ?? defaults[key];
+
+    normalized[key] = {
+      color: normalizeColor(style.color),
+      lineWidth: Math.min(Math.max(Math.round(style.lineWidth), 1), 5),
+      lineStyle: lineStyles.includes(style.lineStyle) ? style.lineStyle : 'solid',
+    };
+  }
+
+  return normalized;
+}
+
+function defaultStylesForParams(params: IndicatorParams): Record<string, IndicatorStyle> {
+  const palette = defaultPalette(params.kind);
+
+  return Object.fromEntries(
+    seriesKeysForParams(params).map((key, index) => [
+      key,
+      {
+        color: palette[index % palette.length],
+        lineWidth: params.kind === 'supertrend' ? 2 : 1,
+        lineStyle: 'solid' as const,
+      },
+    ]),
+  );
+}
+
+function seriesKeysForParams(params: IndicatorParams): string[] {
+  switch (params.kind) {
+    case 'volume':
+      return ['volume'];
+    case 'ma':
+    case 'ema':
+      return params.periods.map(String);
+    case 'boll':
+      return ['up', 'mid', 'down'];
+    case 'macd':
+      return ['dif', 'dea', 'histogram'];
+    case 'rsi':
+      return ['rsi'];
+    case 'atr':
+      return ['atr'];
+    case 'kdj':
+      return ['k', 'd', 'j'];
+    case 'supertrend':
+      return ['supertrend'];
+  }
+}
+
+function defaultPalette(kind: IndicatorKind) {
+  switch (kind) {
+    case 'volume':
+      return ['#4b78ff'];
+    case 'ma':
+      return ['#f6c343', '#38bdf8', '#fb7185', '#a3e635'];
+    case 'ema':
+      return ['#8b5cf6', '#14b8a6', '#f97316', '#60a5fa'];
+    case 'boll':
+      return ['#94a3b8', '#64748b', '#94a3b8'];
+    case 'macd':
+      return ['#f6c343', '#38bdf8', '#22ab94'];
+    case 'rsi':
+      return ['#fb7185'];
+    case 'atr':
+      return ['#14b8a6'];
+    case 'kdj':
+      return ['#f6c343', '#38bdf8', '#fb7185'];
+    case 'supertrend':
+      return ['#22ab94'];
+  }
+}
+
+function normalizeColor(color: string) {
+  return /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(color) ? color : '#ffffff';
+}
+
+function toColorInputValue(color: string) {
+  return normalizeColor(color).slice(0, 7);
+}
+
+function formatIndicatorNumber(value: number) {
+  return Number(value.toFixed(2)).toString();
 }
 
 function DataBadge(props: { label: string; data?: ChartDataResponse }) {
@@ -1116,4 +1854,16 @@ function publishPerformanceState(state: {
       __KLINEFORGE_PERF__?: typeof state;
     }
   ).__KLINEFORGE_PERF__ = state;
+}
+
+function publishIndicatorState() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  (
+    window as Window & {
+      __KLINEFORGE_INDICATORS__?: ReturnType<typeof getPreviewIndicatorDebugState>;
+    }
+  ).__KLINEFORGE_INDICATORS__ = getPreviewIndicatorDebugState();
 }

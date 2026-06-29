@@ -1,0 +1,1231 @@
+{
+  "url": "http://127.0.0.1:4173/",
+  "passed": true,
+  "steps": [
+    "default instances loaded for left 5m",
+    "edited MA params and style",
+    "hide/show works",
+    "added RSI instance",
+    "deleted RSI instance",
+    "right chart isolated from left chart",
+    "interval-scoped instances restored after switching back",
+    "20-instance cap is visible and enforced",
+    "large-data skip feedback visible"
+  ],
+  "screenshotPath": "artifacts/indicator-instances/indicator-instances.png",
+  "indicatorState": {
+    "left:5m": [
+      {
+        "id": "left-5m-volume",
+        "name": "Volume",
+        "enabled": true,
+        "params": {
+          "kind": "volume"
+        },
+        "styles": {
+          "volume": {
+            "color": "#4b78ff66",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-ma",
+        "name": "MA(7,21)",
+        "enabled": true,
+        "params": {
+          "kind": "ma",
+          "periods": [
+            7,
+            21
+          ]
+        },
+        "styles": {
+          "7": {
+            "color": "#ff0000",
+            "lineWidth": 3,
+            "lineStyle": "dashed"
+          },
+          "21": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-ema",
+        "name": "EMA(12,26)",
+        "enabled": true,
+        "params": {
+          "kind": "ema",
+          "periods": [
+            12,
+            26
+          ]
+        },
+        "styles": {
+          "12": {
+            "color": "#8b5cf6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "26": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-boll",
+        "name": "BOLL(20,2)",
+        "enabled": true,
+        "params": {
+          "kind": "boll",
+          "period": 20,
+          "multiplier": 2
+        },
+        "styles": {
+          "up": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "mid": {
+            "color": "#64748b",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "down": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-macd",
+        "name": "MACD(12,26,9)",
+        "enabled": true,
+        "params": {
+          "kind": "macd",
+          "shortPeriod": 12,
+          "longPeriod": 26,
+          "signalPeriod": 9
+        },
+        "styles": {
+          "dif": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "dea": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "histogram": {
+            "color": "#22ab9466",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-rsi",
+        "name": "RSI(14)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 14
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-atr",
+        "name": "ATR(14)",
+        "enabled": true,
+        "params": {
+          "kind": "atr",
+          "period": 14
+        },
+        "styles": {
+          "atr": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-kdj",
+        "name": "KDJ(9,3,3)",
+        "enabled": true,
+        "params": {
+          "kind": "kdj",
+          "period": 9,
+          "kSmoothing": 3,
+          "dSmoothing": 3
+        },
+        "styles": {
+          "k": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "d": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "j": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-5m-supertrend",
+        "name": "Supertrend(10,3)",
+        "enabled": true,
+        "params": {
+          "kind": "supertrend",
+          "period": 10,
+          "multiplier": 3
+        },
+        "styles": {
+          "supertrend": {
+            "color": "#22ab94",
+            "lineWidth": 2,
+            "lineStyle": "solid"
+          }
+        }
+      }
+    ],
+    "right:1h": [
+      {
+        "id": "right-1h-volume",
+        "name": "Volume",
+        "enabled": true,
+        "params": {
+          "kind": "volume"
+        },
+        "styles": {
+          "volume": {
+            "color": "#4b78ff66",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma",
+        "name": "MA(5,10,30)",
+        "enabled": true,
+        "params": {
+          "kind": "ma",
+          "periods": [
+            5,
+            10,
+            30
+          ]
+        },
+        "styles": {
+          "5": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "10": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "30": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ema",
+        "name": "EMA(12,26)",
+        "enabled": true,
+        "params": {
+          "kind": "ema",
+          "periods": [
+            12,
+            26
+          ]
+        },
+        "styles": {
+          "12": {
+            "color": "#8b5cf6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "26": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-boll",
+        "name": "BOLL(20,2)",
+        "enabled": true,
+        "params": {
+          "kind": "boll",
+          "period": 20,
+          "multiplier": 2
+        },
+        "styles": {
+          "up": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "mid": {
+            "color": "#64748b",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "down": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-macd",
+        "name": "MACD(12,26,9)",
+        "enabled": true,
+        "params": {
+          "kind": "macd",
+          "shortPeriod": 12,
+          "longPeriod": 26,
+          "signalPeriod": 9
+        },
+        "styles": {
+          "dif": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "dea": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "histogram": {
+            "color": "#22ab9466",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-rsi",
+        "name": "RSI(14)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 14
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-atr",
+        "name": "ATR(14)",
+        "enabled": true,
+        "params": {
+          "kind": "atr",
+          "period": 14
+        },
+        "styles": {
+          "atr": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-kdj",
+        "name": "KDJ(9,3,3)",
+        "enabled": true,
+        "params": {
+          "kind": "kdj",
+          "period": 9,
+          "kSmoothing": 3,
+          "dSmoothing": 3
+        },
+        "styles": {
+          "k": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "d": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "j": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-supertrend",
+        "name": "Supertrend(10,3)",
+        "enabled": true,
+        "params": {
+          "kind": "supertrend",
+          "period": 10,
+          "multiplier": 3
+        },
+        "styles": {
+          "supertrend": {
+            "color": "#22ab94",
+            "lineWidth": 2,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772441888",
+        "name": "BOLL(34,2.5)",
+        "enabled": true,
+        "params": {
+          "kind": "boll",
+          "period": 34,
+          "multiplier": 2.5
+        },
+        "styles": {
+          "up": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "mid": {
+            "color": "#64748b",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "down": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772442689",
+        "name": "RSI(50)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 50
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772442820",
+        "name": "RSI(51)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 51
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772442957",
+        "name": "RSI(52)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 52
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772443127",
+        "name": "RSI(53)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 53
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772443291",
+        "name": "RSI(54)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 54
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772443423",
+        "name": "RSI(55)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 55
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772443574",
+        "name": "RSI(56)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 56
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772443705",
+        "name": "RSI(57)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 57
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772443821",
+        "name": "RSI(58)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 58
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1h-ma-1782772443979",
+        "name": "RSI(59)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 59
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      }
+    ],
+    "right:2h": [
+      {
+        "id": "right-2h-volume",
+        "name": "Volume",
+        "enabled": true,
+        "params": {
+          "kind": "volume"
+        },
+        "styles": {
+          "volume": {
+            "color": "#4b78ff66",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-ma",
+        "name": "MA(5,10,30)",
+        "enabled": true,
+        "params": {
+          "kind": "ma",
+          "periods": [
+            5,
+            10,
+            30
+          ]
+        },
+        "styles": {
+          "5": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "10": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "30": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-ema",
+        "name": "EMA(12,26)",
+        "enabled": true,
+        "params": {
+          "kind": "ema",
+          "periods": [
+            12,
+            26
+          ]
+        },
+        "styles": {
+          "12": {
+            "color": "#8b5cf6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "26": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-boll",
+        "name": "BOLL(20,2)",
+        "enabled": true,
+        "params": {
+          "kind": "boll",
+          "period": 20,
+          "multiplier": 2
+        },
+        "styles": {
+          "up": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "mid": {
+            "color": "#64748b",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "down": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-macd",
+        "name": "MACD(12,26,9)",
+        "enabled": true,
+        "params": {
+          "kind": "macd",
+          "shortPeriod": 12,
+          "longPeriod": 26,
+          "signalPeriod": 9
+        },
+        "styles": {
+          "dif": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "dea": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "histogram": {
+            "color": "#22ab9466",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-rsi",
+        "name": "RSI(14)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 14
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-atr",
+        "name": "ATR(14)",
+        "enabled": true,
+        "params": {
+          "kind": "atr",
+          "period": 14
+        },
+        "styles": {
+          "atr": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-kdj",
+        "name": "KDJ(9,3,3)",
+        "enabled": true,
+        "params": {
+          "kind": "kdj",
+          "period": 9,
+          "kSmoothing": 3,
+          "dSmoothing": 3
+        },
+        "styles": {
+          "k": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "d": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "j": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-supertrend",
+        "name": "Supertrend(10,3)",
+        "enabled": true,
+        "params": {
+          "kind": "supertrend",
+          "period": 10,
+          "multiplier": 3
+        },
+        "styles": {
+          "supertrend": {
+            "color": "#22ab94",
+            "lineWidth": 2,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-2h-ma-1782772442287",
+        "name": "Supertrend(11,4)",
+        "enabled": true,
+        "params": {
+          "kind": "supertrend",
+          "period": 11,
+          "multiplier": 4
+        },
+        "styles": {
+          "supertrend": {
+            "color": "#22ab94",
+            "lineWidth": 2,
+            "lineStyle": "solid"
+          }
+        }
+      }
+    ],
+    "left:1m": [
+      {
+        "id": "left-1m-volume",
+        "name": "Volume",
+        "enabled": true,
+        "params": {
+          "kind": "volume"
+        },
+        "styles": {
+          "volume": {
+            "color": "#4b78ff66",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-ma",
+        "name": "MA(5,10,30)",
+        "enabled": true,
+        "params": {
+          "kind": "ma",
+          "periods": [
+            5,
+            10,
+            30
+          ]
+        },
+        "styles": {
+          "5": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "10": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "30": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-ema",
+        "name": "EMA(12,26)",
+        "enabled": true,
+        "params": {
+          "kind": "ema",
+          "periods": [
+            12,
+            26
+          ]
+        },
+        "styles": {
+          "12": {
+            "color": "#8b5cf6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "26": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-boll",
+        "name": "BOLL(20,2)",
+        "enabled": true,
+        "params": {
+          "kind": "boll",
+          "period": 20,
+          "multiplier": 2
+        },
+        "styles": {
+          "up": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "mid": {
+            "color": "#64748b",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "down": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-macd",
+        "name": "MACD(12,26,9)",
+        "enabled": true,
+        "params": {
+          "kind": "macd",
+          "shortPeriod": 12,
+          "longPeriod": 26,
+          "signalPeriod": 9
+        },
+        "styles": {
+          "dif": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "dea": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "histogram": {
+            "color": "#22ab9466",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-rsi",
+        "name": "RSI(14)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 14
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-atr",
+        "name": "ATR(14)",
+        "enabled": true,
+        "params": {
+          "kind": "atr",
+          "period": 14
+        },
+        "styles": {
+          "atr": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-kdj",
+        "name": "KDJ(9,3,3)",
+        "enabled": true,
+        "params": {
+          "kind": "kdj",
+          "period": 9,
+          "kSmoothing": 3,
+          "dSmoothing": 3
+        },
+        "styles": {
+          "k": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "d": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "j": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "left-1m-supertrend",
+        "name": "Supertrend(10,3)",
+        "enabled": true,
+        "params": {
+          "kind": "supertrend",
+          "period": 10,
+          "multiplier": 3
+        },
+        "styles": {
+          "supertrend": {
+            "color": "#22ab94",
+            "lineWidth": 2,
+            "lineStyle": "solid"
+          }
+        }
+      }
+    ],
+    "right:1m": [
+      {
+        "id": "right-1m-volume",
+        "name": "Volume",
+        "enabled": true,
+        "params": {
+          "kind": "volume"
+        },
+        "styles": {
+          "volume": {
+            "color": "#4b78ff66",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-ma",
+        "name": "MA(5,10,30)",
+        "enabled": true,
+        "params": {
+          "kind": "ma",
+          "periods": [
+            5,
+            10,
+            30
+          ]
+        },
+        "styles": {
+          "5": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "10": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "30": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-ema",
+        "name": "EMA(12,26)",
+        "enabled": true,
+        "params": {
+          "kind": "ema",
+          "periods": [
+            12,
+            26
+          ]
+        },
+        "styles": {
+          "12": {
+            "color": "#8b5cf6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "26": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-boll",
+        "name": "BOLL(20,2)",
+        "enabled": true,
+        "params": {
+          "kind": "boll",
+          "period": 20,
+          "multiplier": 2
+        },
+        "styles": {
+          "up": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "mid": {
+            "color": "#64748b",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "down": {
+            "color": "#94a3b8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-macd",
+        "name": "MACD(12,26,9)",
+        "enabled": true,
+        "params": {
+          "kind": "macd",
+          "shortPeriod": 12,
+          "longPeriod": 26,
+          "signalPeriod": 9
+        },
+        "styles": {
+          "dif": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "dea": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "histogram": {
+            "color": "#22ab9466",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-rsi",
+        "name": "RSI(14)",
+        "enabled": true,
+        "params": {
+          "kind": "rsi",
+          "period": 14
+        },
+        "styles": {
+          "rsi": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-atr",
+        "name": "ATR(14)",
+        "enabled": true,
+        "params": {
+          "kind": "atr",
+          "period": 14
+        },
+        "styles": {
+          "atr": {
+            "color": "#14b8a6",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-kdj",
+        "name": "KDJ(9,3,3)",
+        "enabled": true,
+        "params": {
+          "kind": "kdj",
+          "period": 9,
+          "kSmoothing": 3,
+          "dSmoothing": 3
+        },
+        "styles": {
+          "k": {
+            "color": "#f6c343",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "d": {
+            "color": "#38bdf8",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          },
+          "j": {
+            "color": "#fb7185",
+            "lineWidth": 1,
+            "lineStyle": "solid"
+          }
+        }
+      },
+      {
+        "id": "right-1m-supertrend",
+        "name": "Supertrend(10,3)",
+        "enabled": true,
+        "params": {
+          "kind": "supertrend",
+          "period": 10,
+          "multiplier": 3
+        },
+        "styles": {
+          "supertrend": {
+            "color": "#22ab94",
+            "lineWidth": 2,
+            "lineStyle": "solid"
+          }
+        }
+      }
+    ]
+  }
+}

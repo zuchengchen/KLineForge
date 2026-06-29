@@ -3,7 +3,11 @@ use std::path::PathBuf;
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::{
-    domain::{CacheClearRequest, CacheClearResult, CacheSummary, Kline, KlineRequest, Market},
+    domain::{
+        CacheClearRequest, CacheClearResult, CacheSummary, ChartId, IndicatorInstance,
+        IndicatorKind, IndicatorParams, Kline, KlineRequest, MAX_INDICATOR_INSTANCES_PER_SCOPE,
+        Market,
+    },
     error::{AppError, AppResult},
 };
 
@@ -270,6 +274,165 @@ impl Database {
             .transpose()
             .map_err(AppError::from)
     }
+
+    pub async fn list_indicator_instances(
+        &self,
+        chart_id: ChartId,
+        interval: &str,
+    ) -> AppResult<Vec<IndicatorInstance>> {
+        let rows = sqlx::query_as::<_, IndicatorInstanceRow>(
+            r#"
+            SELECT id, chart_id, interval, kind, name, enabled, position, params_json, styles_json, updated_at
+            FROM indicator_instances
+            WHERE chart_id = ?1 AND interval = ?2
+            ORDER BY position ASC, updated_at ASC, id ASC
+            "#,
+        )
+        .bind(chart_id.as_str())
+        .bind(interval)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(IndicatorInstance::try_from).collect()
+    }
+
+    pub async fn all_indicator_instances(&self) -> AppResult<Vec<IndicatorInstance>> {
+        let rows = sqlx::query_as::<_, IndicatorInstanceRow>(
+            r#"
+            SELECT id, chart_id, interval, kind, name, enabled, position, params_json, styles_json, updated_at
+            FROM indicator_instances
+            ORDER BY chart_id ASC, interval ASC, position ASC, updated_at ASC, id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(IndicatorInstance::try_from).collect()
+    }
+
+    pub async fn upsert_indicator_instance(
+        &self,
+        instance: IndicatorInstance,
+    ) -> AppResult<IndicatorInstance> {
+        let mut instance = instance.normalized()?;
+        let scope_count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM indicator_instances
+            WHERE chart_id = ?1 AND interval = ?2 AND id <> ?3
+            "#,
+        )
+        .bind(instance.chart_id.as_str())
+        .bind(&instance.interval)
+        .bind(&instance.id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        if scope_count.0 as usize >= MAX_INDICATOR_INSTANCES_PER_SCOPE {
+            return Err(AppError::Message(format!(
+                "at most {MAX_INDICATOR_INSTANCES_PER_SCOPE} indicator instances are allowed per chart and interval"
+            )));
+        }
+
+        instance.updated_at = now_ms();
+
+        sqlx::query(
+            r#"
+            INSERT INTO indicator_instances (
+                id, chart_id, interval, kind, name, enabled, position, params_json, styles_json, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(id) DO UPDATE SET
+                chart_id = excluded.chart_id,
+                interval = excluded.interval,
+                kind = excluded.kind,
+                name = excluded.name,
+                enabled = excluded.enabled,
+                position = excluded.position,
+                params_json = excluded.params_json,
+                styles_json = excluded.styles_json,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&instance.id)
+        .bind(instance.chart_id.as_str())
+        .bind(&instance.interval)
+        .bind(instance.kind.as_str())
+        .bind(&instance.name)
+        .bind(instance.enabled)
+        .bind(instance.position)
+        .bind(serde_json::to_string(&instance.params)?)
+        .bind(serde_json::to_string(&instance.styles)?)
+        .bind(instance.updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(instance)
+    }
+
+    pub async fn save_indicator_instances(
+        &self,
+        instances: &[IndicatorInstance],
+    ) -> AppResult<Vec<IndicatorInstance>> {
+        let mut saved = Vec::with_capacity(instances.len());
+
+        for instance in instances {
+            saved.push(self.upsert_indicator_instance(instance.clone()).await?);
+        }
+
+        Ok(saved)
+    }
+
+    pub async fn delete_indicator_instance(&self, id: &str) -> AppResult<bool> {
+        let result = sqlx::query("DELETE FROM indicator_instances WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct IndicatorInstanceRow {
+    id: String,
+    chart_id: String,
+    interval: String,
+    kind: String,
+    name: String,
+    enabled: bool,
+    position: i64,
+    params_json: String,
+    styles_json: String,
+    updated_at: i64,
+}
+
+impl TryFrom<IndicatorInstanceRow> for IndicatorInstance {
+    type Error = AppError;
+
+    fn try_from(row: IndicatorInstanceRow) -> Result<Self, Self::Error> {
+        let chart_id = ChartId::from_storage(&row.chart_id).ok_or_else(|| {
+            AppError::Message(format!("unknown indicator chart id: {}", row.chart_id))
+        })?;
+        let kind = IndicatorKind::from_storage(&row.kind)
+            .ok_or_else(|| AppError::Message(format!("unknown indicator kind: {}", row.kind)))?;
+        let params: IndicatorParams = serde_json::from_str(&row.params_json)?;
+        let styles = serde_json::from_str(&row.styles_json)?;
+
+        IndicatorInstance {
+            id: row.id,
+            chart_id,
+            interval: row.interval,
+            kind,
+            name: row.name,
+            enabled: row.enabled,
+            position: row.position,
+            params,
+            styles,
+            updated_at: row.updated_at,
+        }
+        .normalized()
+    }
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -324,7 +487,10 @@ pub fn normalize_market(market: Market) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Market;
+    use crate::domain::{
+        ChartId, IndicatorParams, IndicatorSettings, MAX_INDICATOR_INSTANCES_PER_SCOPE, Market,
+        default_indicator_instances,
+    };
 
     #[tokio::test]
     async fn writes_and_reads_klines() {
@@ -408,5 +574,97 @@ mod tests {
 
         assert_eq!(cached.len(), 2);
         assert!(cached.len() < 100_000);
+    }
+
+    #[tokio::test]
+    async fn saves_and_reads_indicator_instances_by_chart_interval() {
+        let db = Database::memory().await.expect("memory db");
+        let mut instances = default_indicator_instances(
+            ChartId::Left,
+            "1h",
+            &IndicatorSettings {
+                volume: false,
+                ma: true,
+                ema: false,
+                boll: false,
+                macd: false,
+                rsi: false,
+                atr: false,
+                kdj: false,
+                supertrend: false,
+            },
+        );
+        instances[0].name = "ignored".to_string();
+
+        let saved = db
+            .save_indicator_instances(&instances)
+            .await
+            .expect("save indicators");
+        let read = db
+            .list_indicator_instances(ChartId::Left, "1h")
+            .await
+            .expect("read indicators");
+        let other_scope = db
+            .list_indicator_instances(ChartId::Right, "1h")
+            .await
+            .expect("read other scope");
+
+        assert_eq!(saved[0].name, "MA(5,10,30)");
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].name, "MA(5,10,30)");
+        assert!(other_scope.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_more_than_twenty_indicator_instances_per_scope() {
+        let db = Database::memory().await.expect("memory db");
+
+        for index in 0..MAX_INDICATOR_INSTANCES_PER_SCOPE {
+            let mut instance = default_indicator_instances(
+                ChartId::Left,
+                "1h",
+                &IndicatorSettings {
+                    volume: false,
+                    ma: true,
+                    ema: false,
+                    boll: false,
+                    macd: false,
+                    rsi: false,
+                    atr: false,
+                    kdj: false,
+                    supertrend: false,
+                },
+            )
+            .remove(0);
+            instance.id = format!("ma-{index}");
+            instance.position = index as i64;
+            instance.params = IndicatorParams::Ma {
+                periods: vec![(index + 1) as u16],
+            };
+
+            db.upsert_indicator_instance(instance)
+                .await
+                .expect("save within limit");
+        }
+
+        let mut overflow = default_indicator_instances(
+            ChartId::Left,
+            "1h",
+            &IndicatorSettings {
+                volume: false,
+                ma: true,
+                ema: false,
+                boll: false,
+                macd: false,
+                rsi: false,
+                atr: false,
+                kdj: false,
+                supertrend: false,
+            },
+        )
+        .remove(0);
+        overflow.id = "overflow".to_string();
+
+        assert!(db.upsert_indicator_instance(overflow).await.is_err());
     }
 }

@@ -9,12 +9,14 @@ use crate::{
     domain::{
         AppConfigExport, AppSettings, BenchmarkSummary, CacheClearRequest, CacheClearResult,
         CacheSummary, ChartDataResponse, ChartId, ChartPoint, ConfigImportResult, CsvExport,
-        DrawingObject, DrawingQuery, HealthStatus, IndicatorValue, KlineRequest, Leaderboards,
-        LiveKlineEvent, LiveStreamRequest, Market, MarketInfoSnapshot, SymbolSummary,
-        WatchlistMutation, WatchlistReorderRequest, interval_ms,
+        DrawingObject, DrawingQuery, HealthStatus, IndicatorCalculationRequest, IndicatorInstance,
+        IndicatorResponse, IndicatorScope, KlineRequest, Leaderboards, LiveKlineEvent,
+        LiveStreamRequest, MAX_INDICATOR_CALCULATION_ROWS, Market, MarketInfoSnapshot,
+        SymbolSummary, WatchlistMutation, WatchlistReorderRequest, default_indicator_instances,
+        interval_ms,
     },
     error::{AppError, AppResult},
-    indicators::calculate_default_indicators,
+    indicators::calculate_indicator_series,
     state::AppState,
 };
 
@@ -114,16 +116,56 @@ pub async fn get_chart_data(
 #[tauri::command]
 pub async fn get_indicators(
     state: State<'_, AppState>,
-    request: KlineRequest,
-) -> AppResult<Vec<IndicatorValue>> {
-    if request.limit == Some(0) {
-        return Ok(Vec::new());
+    calculation: IndicatorCalculationRequest,
+) -> AppResult<IndicatorResponse> {
+    let request = calculation.request;
+    let instances =
+        ensure_indicator_scope_initialized(state.inner(), calculation.chart_id, &request.interval)
+            .await?;
+    let max_rows = calculation
+        .max_rows
+        .unwrap_or(MAX_INDICATOR_CALCULATION_ROWS);
+
+    if request.limit == Some(0) || request.limit.is_some_and(|limit| limit > max_rows) {
+        return Ok(IndicatorResponse {
+            instances,
+            series: Vec::new(),
+            skipped_reason: Some(format!(
+                "Indicator calculation skipped above {} rows",
+                max_rows
+            )),
+        });
     }
 
     let rows = state.db.read_klines(&request).await?;
     let points: Vec<ChartPoint> = rows.iter().map(ChartPoint::from).collect();
 
-    Ok(calculate_default_indicators(&points))
+    Ok(IndicatorResponse {
+        series: calculate_indicator_series(&points, &instances),
+        instances,
+        skipped_reason: None,
+    })
+}
+
+#[tauri::command]
+pub async fn list_indicator_instances(
+    state: State<'_, AppState>,
+    scope: IndicatorScope,
+) -> AppResult<Vec<IndicatorInstance>> {
+    ensure_indicator_scope_initialized(state.inner(), scope.chart_id, &scope.interval).await
+}
+
+#[tauri::command]
+pub async fn save_indicator_instance(
+    state: State<'_, AppState>,
+    instance: IndicatorInstance,
+) -> AppResult<IndicatorInstance> {
+    state.db.upsert_indicator_instance(instance).await
+}
+
+#[tauri::command]
+pub async fn delete_indicator_instance(state: State<'_, AppState>, id: String) -> AppResult<bool> {
+    state.db.delete_indicator_instance(&id).await
 }
 
 #[tauri::command]
@@ -339,11 +381,12 @@ pub async fn export_config(state: State<'_, AppState>) -> AppResult<String> {
     .await?;
 
     serde_json::to_string_pretty(&AppConfigExport {
-        schema_version: 1,
+        schema_version: 2,
         exported_at: now_ms(),
         settings,
         watchlist,
         drawings,
+        indicators: state.db.all_indicator_instances().await?,
     })
     .map_err(AppError::from)
 }
@@ -381,10 +424,17 @@ pub async fn import_config(
         write_drawing(state.db.pool(), drawing).await?;
     }
 
+    let saved_indicators = state
+        .db
+        .save_indicator_instances(&config.indicators)
+        .await?
+        .len();
+
     Ok(ConfigImportResult {
         settings_imported: true,
         watchlist_count: config.watchlist.len(),
         drawing_count: config.drawings.len(),
+        indicator_count: saved_indicators,
     })
 }
 
@@ -576,6 +626,55 @@ async fn write_drawing(pool: &sqlx::SqlitePool, drawing: &DrawingObject) -> AppR
     .await?;
 
     Ok(())
+}
+
+async fn ensure_indicator_scope_initialized(
+    state: &AppState,
+    chart_id: ChartId,
+    interval: &str,
+) -> AppResult<Vec<IndicatorInstance>> {
+    let marker_key = indicator_scope_marker_key(chart_id, interval);
+    let existing = state
+        .db
+        .list_indicator_instances(chart_id, interval)
+        .await?;
+    let marker = state.db.setting_json(&marker_key).await?;
+
+    if !existing.is_empty() {
+        if marker.is_none() {
+            state
+                .db
+                .upsert_setting_json(&marker_key, &serde_json::json!({ "initialized": true }))
+                .await?;
+        }
+        return Ok(existing);
+    }
+
+    if marker.is_some() {
+        return Ok(existing);
+    }
+
+    let settings = state
+        .db
+        .setting_json("app-settings")
+        .await?
+        .and_then(|value| serde_json::from_value::<AppSettings>(value).ok())
+        .unwrap_or_default();
+    let defaults = default_indicator_instances(chart_id, interval, &settings.indicators);
+    let saved = state.db.save_indicator_instances(&defaults).await?;
+    state
+        .db
+        .upsert_setting_json(&marker_key, &serde_json::json!({ "initialized": true }))
+        .await?;
+
+    Ok(saved)
+}
+
+fn indicator_scope_marker_key(chart_id: ChartId, interval: &str) -> String {
+    format!(
+        "indicator-scope-initialized:{}:{interval}",
+        chart_id.as_str()
+    )
 }
 
 #[derive(Debug, sqlx::FromRow)]

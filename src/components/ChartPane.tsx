@@ -2,16 +2,18 @@ import {
   CandlestickSeries,
   ColorType,
   HistogramSeries,
+  LineStyle,
   LineSeries,
   createChart,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type LineWidth,
   type LogicalRange,
   type Time,
 } from 'lightweight-charts';
 import { createEffect, onCleanup, type Accessor } from 'solid-js';
-import type { ChartPoint, DrawingObject, IndicatorSettings, IndicatorValue } from '../services/types';
+import type { ChartPoint, DrawingObject, IndicatorInstance, IndicatorSeries } from '../services/types';
 
 export interface ChartPaneMetrics {
   inputRows: number;
@@ -25,8 +27,9 @@ export interface ChartPaneMetrics {
 interface ChartPaneProps {
   title: string;
   points: Accessor<ChartPoint[]>;
-  indicators: Accessor<IndicatorValue[]>;
-  indicatorSettings: Accessor<IndicatorSettings>;
+  indicators: Accessor<IndicatorSeries[]>;
+  indicatorInstances: Accessor<IndicatorInstance[]>;
+  indicatorStatus: Accessor<string | undefined>;
   drawings: Accessor<DrawingObject[]>;
   liveStatus: Accessor<{ source: string; isClosed: boolean; time: number } | undefined>;
   resetKey?: Accessor<string>;
@@ -43,24 +46,6 @@ export function ChartPane(props: ChartPaneProps) {
   const containerRef: { current?: HTMLDivElement } = {};
   let chart: IChartApi | undefined;
   let candleSeries: ISeriesApi<'Candlestick'> | undefined;
-  let volumeSeries: ISeriesApi<'Histogram'> | undefined;
-  let ma5Series: ISeriesApi<'Line'> | undefined;
-  let ma10Series: ISeriesApi<'Line'> | undefined;
-  let ma30Series: ISeriesApi<'Line'> | undefined;
-  let ema12Series: ISeriesApi<'Line'> | undefined;
-  let ema26Series: ISeriesApi<'Line'> | undefined;
-  let bollUpSeries: ISeriesApi<'Line'> | undefined;
-  let bollMidSeries: ISeriesApi<'Line'> | undefined;
-  let bollDownSeries: ISeriesApi<'Line'> | undefined;
-  let macdSeries: ISeriesApi<'Histogram'> | undefined;
-  let macdDifSeries: ISeriesApi<'Line'> | undefined;
-  let macdDeaSeries: ISeriesApi<'Line'> | undefined;
-  let rsiSeries: ISeriesApi<'Line'> | undefined;
-  let atrSeries: ISeriesApi<'Line'> | undefined;
-  let kdjKSeries: ISeriesApi<'Line'> | undefined;
-  let kdjDSeries: ISeriesApi<'Line'> | undefined;
-  let kdjJSeries: ISeriesApi<'Line'> | undefined;
-  let supertrendSeries: ISeriesApi<'Line'> | undefined;
   let applyingExternalRange = false;
   let externalRangeUnlockFrame: number | undefined;
   let externalRangeUnlockFollowupFrame: number | undefined;
@@ -70,6 +55,7 @@ export function ChartPane(props: ChartPaneProps) {
   let currentLodApplied = false;
   const priceLines = new Map<string, IPriceLine>();
   const drawingSeries = new Map<string, ISeriesApi<'Line'>>();
+  const indicatorSeriesMap = new Map<string, ISeriesApi<'Line'> | ISeriesApi<'Histogram'>>();
 
   const resize = () => {
     if (!containerRef.current || !chart) {
@@ -119,107 +105,11 @@ export function ChartPane(props: ChartPaneProps) {
       wickUpColor: '#22ab94',
       wickDownColor: '#f23645',
     });
-    volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#4b78ff66',
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-    });
-    ma5Series = chart.addSeries(LineSeries, {
-      color: '#f6c343',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    ma10Series = chart.addSeries(LineSeries, {
-      color: '#38bdf8',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    ma30Series = chart.addSeries(LineSeries, {
-      color: '#fb7185',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    ema12Series = chart.addSeries(LineSeries, {
-      color: '#8b5cf6',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    ema26Series = chart.addSeries(LineSeries, {
-      color: '#14b8a6',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    bollUpSeries = chart.addSeries(LineSeries, {
-      color: '#94a3b8',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    bollMidSeries = chart.addSeries(LineSeries, {
-      color: '#64748b',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    bollDownSeries = chart.addSeries(LineSeries, {
-      color: '#94a3b8',
-      lineWidth: 1,
-      priceLineVisible: false,
-    });
-    supertrendSeries = chart.addSeries(LineSeries, {
-      color: '#22ab94',
-      lineWidth: 2,
-      priceLineVisible: false,
-    });
-    macdSeries = chart.addSeries(HistogramSeries, {
-      color: '#22ab9444',
-      priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
-      priceScaleId: 'right',
-    }, 1);
-    macdDifSeries = chart.addSeries(LineSeries, {
-      color: '#f6c343',
-      lineWidth: 1,
-      priceLineVisible: false,
-    }, 1);
-    macdDeaSeries = chart.addSeries(LineSeries, {
-      color: '#38bdf8',
-      lineWidth: 1,
-      priceLineVisible: false,
-    }, 1);
-    rsiSeries = chart.addSeries(LineSeries, {
-      color: '#fb7185',
-      lineWidth: 1,
-      priceLineVisible: false,
-    }, 2);
-    atrSeries = chart.addSeries(LineSeries, {
-      color: '#14b8a6',
-      lineWidth: 1,
-      priceLineVisible: false,
-    }, 3);
-    kdjKSeries = chart.addSeries(LineSeries, {
-      color: '#f6c343',
-      lineWidth: 1,
-      priceLineVisible: false,
-    }, 4);
-    kdjDSeries = chart.addSeries(LineSeries, {
-      color: '#38bdf8',
-      lineWidth: 1,
-      priceLineVisible: false,
-    }, 4);
-    kdjJSeries = chart.addSeries(LineSeries, {
-      color: '#fb7185',
-      lineWidth: 1,
-      priceLineVisible: false,
-    }, 4);
     chart.panes()[0]?.setStretchFactor(8);
     chart.panes()[1]?.setStretchFactor(2);
     chart.panes()[2]?.setStretchFactor(2);
     chart.panes()[3]?.setStretchFactor(2);
     chart.panes()[4]?.setStretchFactor(2);
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: {
-        top: 0.78,
-        bottom: 0,
-      },
-    });
     chart.subscribeCrosshairMove((param) => {
       if (!props.onCrosshairMove || !param.time || !candleSeries) {
         props.onCrosshairMove?.(null);
@@ -296,16 +186,6 @@ export function ChartPane(props: ChartPaneProps) {
         close: point.close,
       })),
     );
-    volumeSeries?.setData(
-      props.indicatorSettings().volume
-        ? renderedPoints.map((point) => ({
-            time: point.time as Time,
-            value: point.volume,
-            color: point.close >= point.open ? '#22ab9444' : '#f2364544',
-          }))
-        : [],
-    );
-
     const setDataMs = Math.round(performance.now() - startedAt);
 
     if (renderedPoints.length > 0) {
@@ -328,98 +208,31 @@ export function ChartPane(props: ChartPaneProps) {
   });
 
   createEffect(() => {
-    const indicators = currentLodApplied ? [] : props.indicators();
-    const settings = props.indicatorSettings();
+    if (!chart) {
+      return;
+    }
 
-    ma5Series?.setData(
-      (settings.ma ? indicators : [])
-        .filter((row) => typeof row.ma5 === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.ma5 ?? 0 })),
-    );
-    ma10Series?.setData(
-      (settings.ma ? indicators : [])
-        .filter((row) => typeof row.ma10 === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.ma10 ?? 0 })),
-    );
-    ma30Series?.setData(
-      (settings.ma ? indicators : [])
-        .filter((row) => typeof row.ma30 === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.ma30 ?? 0 })),
-    );
-    ema12Series?.setData(
-      (settings.ema ? indicators : [])
-        .filter((row) => typeof row.ema12 === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.ema12 ?? 0 })),
-    );
-    ema26Series?.setData(
-      (settings.ema ? indicators : [])
-        .filter((row) => typeof row.ema26 === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.ema26 ?? 0 })),
-    );
-    bollUpSeries?.setData(
-      (settings.boll ? indicators : [])
-        .filter((row) => typeof row.bollUp === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.bollUp ?? 0 })),
-    );
-    bollMidSeries?.setData(
-      (settings.boll ? indicators : [])
-        .filter((row) => typeof row.bollMid === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.bollMid ?? 0 })),
-    );
-    bollDownSeries?.setData(
-      (settings.boll ? indicators : [])
-        .filter((row) => typeof row.bollDown === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.bollDown ?? 0 })),
-    );
-    supertrendSeries?.setData(
-      (settings.supertrend ? indicators : [])
-        .filter((row) => typeof row.supertrend === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.supertrend ?? 0 })),
-    );
-    macdSeries?.setData(
-      (settings.macd ? indicators : [])
-        .filter((row) => typeof row.macd === 'number')
-        .map((row) => ({
-          time: row.time as Time,
-          value: row.macd ?? 0,
-          color: (row.macd ?? 0) >= 0 ? '#22ab9466' : '#f2364566',
+    const indicators = currentLodApplied ? [] : props.indicators();
+    const nextIds = new Set(indicators.map((series) => series.id));
+
+    for (const [id, series] of indicatorSeriesMap) {
+      if (!nextIds.has(id)) {
+        chart.removeSeries(series);
+        indicatorSeriesMap.delete(id);
+      }
+    }
+
+    for (const indicator of indicators) {
+      const series = getOrCreateIndicatorSeries(chart, indicatorSeriesMap, indicator);
+      applyIndicatorSeriesOptions(series, indicator);
+      series.setData(
+        indicator.data.map((point) => ({
+          time: point.time as Time,
+          value: point.value,
+          color: point.color,
         })),
-    );
-    macdDifSeries?.setData(
-      (settings.macd ? indicators : [])
-        .filter((row) => typeof row.macdDif === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.macdDif ?? 0 })),
-    );
-    macdDeaSeries?.setData(
-      (settings.macd ? indicators : [])
-        .filter((row) => typeof row.macdDea === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.macdDea ?? 0 })),
-    );
-    rsiSeries?.setData(
-      (settings.rsi ? indicators : [])
-        .filter((row) => typeof row.rsi14 === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.rsi14 ?? 0 })),
-    );
-    atrSeries?.setData(
-      (settings.atr ? indicators : [])
-        .filter((row) => typeof row.atr14 === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.atr14 ?? 0 })),
-    );
-    kdjKSeries?.setData(
-      (settings.kdj ? indicators : [])
-        .filter((row) => typeof row.kdjK === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.kdjK ?? 0 })),
-    );
-    kdjDSeries?.setData(
-      (settings.kdj ? indicators : [])
-        .filter((row) => typeof row.kdjD === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.kdjD ?? 0 })),
-    );
-    kdjJSeries?.setData(
-      (settings.kdj ? indicators : [])
-        .filter((row) => typeof row.kdjJ === 'number')
-        .map((row) => ({ time: row.time as Time, value: row.kdjJ ?? 0 })),
-    );
+      );
+    }
   });
 
   createEffect(() => {
@@ -487,8 +300,12 @@ export function ChartPane(props: ChartPaneProps) {
       for (const series of drawingSeries.values()) {
         chart.removeSeries(series);
       }
+      for (const series of indicatorSeriesMap.values()) {
+        chart.removeSeries(series);
+      }
     }
     drawingSeries.clear();
+    indicatorSeriesMap.clear();
     chart?.remove();
     chart = undefined;
   });
@@ -521,12 +338,113 @@ export function ChartPane(props: ChartPaneProps) {
       <header class="chart-pane__header">
         <span>{props.title}</span>
         <span>
-          {props.liveStatus()?.source ?? 'history'} · {props.liveStatus()?.isClosed ? 'closed' : 'live'} · VOL/MA/EMA/BOLL/MACD/RSI/ATR/KDJ/ST
+          {props.liveStatus()?.source ?? 'history'} · {props.liveStatus()?.isClosed ? 'closed' : 'live'} ·{' '}
+          {props.indicatorStatus() ?? indicatorLegend(props.indicatorInstances())}
         </span>
       </header>
       <div ref={(element) => { containerRef.current = element; }} class="chart-pane__surface" />
     </section>
   );
+}
+
+function getOrCreateIndicatorSeries(
+  chart: IChartApi,
+  seriesMap: Map<string, ISeriesApi<'Line'> | ISeriesApi<'Histogram'>>,
+  indicator: IndicatorSeries,
+) {
+  const current = seriesMap.get(indicator.id);
+
+  if (current) {
+    return current;
+  }
+
+  const options = indicatorSeriesOptions(indicator);
+  const series =
+    indicator.seriesType === 'histogram'
+      ? chart.addSeries(HistogramSeries, options, indicator.pane)
+      : chart.addSeries(LineSeries, options, indicator.pane);
+
+  seriesMap.set(indicator.id, series);
+
+  if (indicator.priceScaleId === 'volume') {
+    applyVolumeScaleMargins(chart);
+  }
+
+  return series;
+}
+
+function applyVolumeScaleMargins(chart: IChartApi) {
+  try {
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: {
+        top: 0.78,
+        bottom: 0,
+      },
+    });
+  } catch {
+    // The custom scale exists only after Lightweight Charts attaches the volume series.
+  }
+}
+
+function applyIndicatorSeriesOptions(
+  series: ISeriesApi<'Line'> | ISeriesApi<'Histogram'>,
+  indicator: IndicatorSeries,
+) {
+  series.applyOptions(indicatorSeriesOptions(indicator));
+}
+
+function indicatorSeriesOptions(indicator: IndicatorSeries) {
+  return {
+    color: indicator.style.color,
+    lineWidth: clampLineWidth(indicator.style.lineWidth),
+    lineStyle: toLightweightLineStyle(indicator.style.lineStyle),
+    priceFormat: indicator.seriesType === 'histogram' && indicator.priceScaleId === 'volume'
+      ? { type: 'volume' as const }
+      : { type: 'price' as const, precision: 4, minMove: 0.0001 },
+    priceLineVisible: false,
+    lastValueVisible: true,
+    ...(indicator.priceScaleId ? { priceScaleId: indicator.priceScaleId } : {}),
+  };
+}
+
+export function toLightweightLineStyle(style: IndicatorSeries['style']['lineStyle']) {
+  switch (style) {
+    case 'dotted':
+      return LineStyle.Dotted;
+    case 'dashed':
+      return LineStyle.Dashed;
+    case 'large-dashed':
+      return LineStyle.LargeDashed;
+    case 'sparse-dotted':
+      return LineStyle.SparseDotted;
+    case 'solid':
+    default:
+      return LineStyle.Solid;
+  }
+}
+
+function clampLineWidth(width: number): LineWidth {
+  if (width <= 1) {
+    return 1;
+  }
+  if (width === 2) {
+    return 2;
+  }
+  if (width === 3) {
+    return 3;
+  }
+
+  return 4;
+}
+
+function indicatorLegend(instances: IndicatorInstance[]) {
+  const enabled = instances.filter((instance) => instance.enabled).map((instance) => instance.name);
+
+  if (enabled.length === 0) {
+    return 'No indicators';
+  }
+
+  return enabled.slice(0, 6).join(' · ') + (enabled.length > 6 ? ` · +${enabled.length - 6}` : '');
 }
 
 function renderDrawing(

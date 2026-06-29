@@ -8,11 +8,12 @@ pub mod indicators;
 pub mod state;
 
 use commands::{
-    add_watchlist_symbol, clear_cache, delete_drawing, export_config, export_klines_csv,
-    get_cache_summary, get_chart_data, get_drawings, get_indicators, get_leaderboards,
-    get_market_info, get_settings, get_symbols, get_watchlist, health, import_config,
-    remove_watchlist_symbol, reorder_watchlist, run_performance_benchmark, save_drawing,
-    save_settings, seed_default_watchlist, start_live_stream, stop_live_stream,
+    add_watchlist_symbol, clear_cache, delete_drawing, delete_indicator_instance, export_config,
+    export_klines_csv, get_cache_summary, get_chart_data, get_drawings, get_indicators,
+    get_leaderboards, get_market_info, get_settings, get_symbols, get_watchlist, health,
+    import_config, list_indicator_instances, remove_watchlist_symbol, reorder_watchlist,
+    run_performance_benchmark, save_drawing, save_indicator_instance, save_settings,
+    seed_default_watchlist, start_live_stream, stop_live_stream,
 };
 use db::{Database, default_database_path};
 use state::AppState;
@@ -49,6 +50,9 @@ pub fn run() {
             get_leaderboards,
             get_chart_data,
             get_indicators,
+            list_indicator_instances,
+            save_indicator_instance,
+            delete_indicator_instance,
             get_cache_summary,
             clear_cache,
             export_klines_csv,

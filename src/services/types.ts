@@ -76,6 +76,85 @@ export interface ChartDatasetExport {
   benchmark: BenchmarkSummary;
 }
 
+export type IndicatorKind =
+  | 'volume'
+  | 'ma'
+  | 'ema'
+  | 'boll'
+  | 'macd'
+  | 'rsi'
+  | 'atr'
+  | 'kdj'
+  | 'supertrend';
+
+export type IndicatorLineStyle = 'solid' | 'dotted' | 'dashed' | 'large-dashed' | 'sparse-dotted';
+export type IndicatorSeriesType = 'line' | 'histogram';
+
+export type IndicatorParams =
+  | { kind: 'volume' }
+  | { kind: 'ma'; periods: number[] }
+  | { kind: 'ema'; periods: number[] }
+  | { kind: 'boll'; period: number; multiplier: number }
+  | { kind: 'macd'; shortPeriod: number; longPeriod: number; signalPeriod: number }
+  | { kind: 'rsi'; period: number }
+  | { kind: 'atr'; period: number }
+  | { kind: 'kdj'; period: number; kSmoothing: number; dSmoothing: number }
+  | { kind: 'supertrend'; period: number; multiplier: number };
+
+export interface IndicatorStyle {
+  color: string;
+  lineWidth: number;
+  lineStyle: IndicatorLineStyle;
+}
+
+export interface IndicatorInstance {
+  id: string;
+  chartId: ChartId;
+  interval: string;
+  kind: IndicatorKind;
+  name: string;
+  enabled: boolean;
+  position: number;
+  params: IndicatorParams;
+  styles: Record<string, IndicatorStyle>;
+  updatedAt: number;
+}
+
+export interface IndicatorScope {
+  chartId: ChartId;
+  interval: string;
+}
+
+export interface IndicatorCalculationRequest {
+  chartId: ChartId;
+  request: KlineRequest;
+  maxRows?: number;
+}
+
+export interface IndicatorSeriesPoint {
+  time: number;
+  value: number;
+  color?: string;
+}
+
+export interface IndicatorSeries {
+  id: string;
+  instanceId: string;
+  key: string;
+  label: string;
+  seriesType: IndicatorSeriesType;
+  pane: number;
+  priceScaleId?: string;
+  style: IndicatorStyle;
+  data: IndicatorSeriesPoint[];
+}
+
+export interface IndicatorResponse {
+  instances: IndicatorInstance[];
+  series: IndicatorSeries[];
+  skippedReason?: string;
+}
+
 export interface IndicatorValue {
   time: number;
   ma5?: number;
@@ -163,6 +242,7 @@ export interface ConfigImportResult {
   settingsImported: boolean;
   watchlistCount: number;
   drawingCount: number;
+  indicatorCount: number;
 }
 
 export interface BenchmarkSummary {

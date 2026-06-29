@@ -1,6 +1,7 @@
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, createLargePeriodPrefetchRequests, shouldRetryEmptyKlineLoad } from './App';
+import { App, createLargePeriodPrefetchRequests, indicatorName, shouldRetryEmptyKlineLoad } from './App';
+import { createDefaultIndicatorInstances } from './services/backend';
 
 describe('App', () => {
   afterEach(() => {
@@ -47,5 +48,28 @@ describe('App', () => {
       }),
     ).toBe(false);
     expect(shouldRetryEmptyKlineLoad({ data: undefined, loading: false, error: new Error('network') })).toBe(true);
+  });
+
+  it('generates indicator names from editable parameters', () => {
+    expect(indicatorName({ kind: 'ma', periods: [5, 10, 30] })).toBe('MA(5,10,30)');
+    expect(indicatorName({ kind: 'macd', shortPeriod: 12, longPeriod: 26, signalPeriod: 9 })).toBe('MACD(12,26,9)');
+    expect(indicatorName({ kind: 'supertrend', period: 10, multiplier: 3 })).toBe('Supertrend(10,3)');
+  });
+
+  it('creates default indicator instances from legacy indicator toggles', () => {
+    const instances = createDefaultIndicatorInstances('left', '1h', {
+      volume: false,
+      ma: true,
+      ema: false,
+      boll: false,
+      macd: false,
+      rsi: false,
+      atr: false,
+      kdj: false,
+      supertrend: true,
+    });
+
+    expect(instances.map((instance) => instance.name)).toEqual(['MA(5,10,30)', 'Supertrend(10,3)']);
+    expect(instances.every((instance) => instance.chartId === 'left' && instance.interval === '1h')).toBe(true);
   });
 });
