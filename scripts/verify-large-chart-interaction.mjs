@@ -185,6 +185,14 @@ try {
 }
 
 async function resolveSystemChromium() {
+  if (await exists('/usr/bin/google-chrome')) {
+    return '/usr/bin/google-chrome';
+  }
+
+  if (await exists('/usr/bin/google-chrome-stable')) {
+    return '/usr/bin/google-chrome-stable';
+  }
+
   if (await exists('/usr/bin/chromium')) {
     return '/usr/bin/chromium';
   }

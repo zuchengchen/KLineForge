@@ -11,6 +11,9 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      CHROMIUM_PATH: /usr/bin/google-chrome
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v5
 
@@ -31,8 +34,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Verify system Chrome
+        run: |
+          test -x "$CHROMIUM_PATH"
+          "$CHROMIUM_PATH" --version
 
       - name: Frontend typecheck
         run: npm run typecheck
