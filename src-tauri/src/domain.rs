@@ -256,21 +256,44 @@ impl Default for AppSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IndicatorSettings {
+    #[serde(default = "default_true")]
+    pub volume: bool,
+    #[serde(default = "default_true")]
     pub ma: bool,
+    #[serde(default = "default_true")]
     pub ema: bool,
+    #[serde(default = "default_true")]
     pub boll: bool,
+    #[serde(default = "default_true")]
+    pub macd: bool,
+    #[serde(default = "default_true")]
+    pub rsi: bool,
+    #[serde(default = "default_true")]
+    pub atr: bool,
+    #[serde(default = "default_true")]
+    pub kdj: bool,
+    #[serde(default = "default_true")]
     pub supertrend: bool,
 }
 
 impl Default for IndicatorSettings {
     fn default() -> Self {
         Self {
+            volume: true,
             ma: true,
             ema: true,
             boll: true,
+            macd: true,
+            rsi: true,
+            atr: true,
+            kdj: true,
             supertrend: true,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -404,7 +427,7 @@ pub fn interval_ms(interval: &str) -> Option<i64> {
         'm' => Some(value * 60_000),
         'h' => Some(value * 60 * 60_000),
         'd' => Some(value * 24 * 60 * 60_000),
-        'w' => Some(value * 7 * 24 * 60 * 60_000),
+        'w' | 'W' => Some(value * 7 * 24 * 60 * 60_000),
         'M' => Some(value * 30 * 24 * 60 * 60_000),
         _ => None,
     }
@@ -412,7 +435,7 @@ pub fn interval_ms(interval: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::Market;
+    use super::{Market, interval_ms};
 
     #[test]
     fn uses_current_binance_websocket_routes() {
@@ -424,5 +447,13 @@ mod tests {
             Market::UsdM.ws_base_url(),
             "wss://fstream.binance.com/market/ws"
         );
+    }
+
+    #[test]
+    fn accepts_supported_chart_intervals() {
+        assert_eq!(interval_ms("3m"), Some(3 * 60_000));
+        assert_eq!(interval_ms("2h"), Some(2 * 60 * 60_000));
+        assert_eq!(interval_ms("1W"), Some(7 * 24 * 60 * 60_000));
+        assert_eq!(interval_ms("1M"), Some(30 * 24 * 60 * 60_000));
     }
 }

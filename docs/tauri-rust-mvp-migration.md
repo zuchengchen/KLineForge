@@ -21,10 +21,10 @@ Status values:
 | Watchlist | Complete | SQLite-backed watchlist seeding, reading, add, remove and reorder implemented. |
 | Symbol search and leaderboards | Complete | Rust symbol list and 24h leaderboards are implemented with compact Solid UI. |
 | Market info bar | Complete | Rust 24h ticker plus USD-M mark/index/funding command and toolbar display implemented. |
-| Built-in indicators | Complete | Rust calculates MA, EMA, BOLL, MACD, RSI, ATR, KDJ and Supertrend. |
-| Indicator configuration | Degraded | Global MA/EMA/BOLL/Supertrend visibility toggles persist in settings; full per-chart parameter/style editor pending. |
-| Drawing tools | Degraded | SQLite-backed horizontal-line creation/loading/deletion is implemented. Advanced trend/rectangle/text editing remains degraded. |
-| Local cache management | Degraded | SQLite K-line cache summary and clear-current-symbol UI implemented; range completeness/tasks pending. |
+| Built-in indicators | Complete | Rust calculates and the chart displays Volume, MA, EMA, BOLL, MACD, RSI, ATR, KDJ and Supertrend. |
+| Indicator configuration | Degraded | Global visibility toggles for all built-in indicators persist in settings; full per-chart parameter/style editor pending. |
+| Drawing tools | Degraded | SQLite-backed creation/loading/deletion covers horizontal line, trend line, vertical line, rectangle, text and measurement annotations. Drag/edit handles, style editing, lock/hide and undo/redo remain pending. |
+| Local cache management | Degraded | SQLite K-line cache summary, clear-current-symbol and per cached interval clear actions are implemented; full range completeness/task queue controls are pending. |
 | Chart PNG export | Complete | Lightweight Charts screenshot export is wired for left and right panes. |
 | K-line CSV export | Complete | Rust exports current request from SQLite or fetches latest data before returning CSV content. |
 | Config import/export | Complete | New-schema settings, watchlist and drawings JSON import/export implemented. Old config compatibility intentionally out of scope. |
@@ -43,7 +43,7 @@ Local artifacts under `artifacts/performance/`:
 | Scenario | Rows | Data source | Chart behavior | Result |
 | --- | ---: | --- | --- | --- |
 | 100k full interaction | 100,000 | Binance Public Data monthly archive | Full rows, indicators, drawing, PNG and CSV workflows | Passed |
-| 1M basic browsing | 1,000,000 | Binance Public Data monthly archive | LOD to 142,858 rendered candles per pane, indicators omitted | Passed |
+| 1M basic browsing | 1,000,000 | Binance Public Data monthly archive | LOD to 142,858 rendered candles per pane, overlay indicators best-effort | Passed |
 | Production render smoke | 1,000 default rows | Preview-generated browser data or Tauri data in desktop runtime | Dual Lightweight Charts panes | Passed |
 
-First-stage accepted degradations remain: per-chart indicator parameter/style editing, advanced drawing tools beyond horizontal lines, and full range-completeness cache task UI.
+First-stage accepted degradations remain: per-chart indicator parameter/style editing, drawing drag/edit/style/lock/history controls, full range-completeness cache task UI, and 1M overlay indicators as a non-gating best-effort path.

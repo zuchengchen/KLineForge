@@ -60,20 +60,22 @@ The current architecture slice is runnable and now covers the core data path:
 4. Binance REST K-line fetch path.
 5. Lightweight Charts dual-pane chart shell.
 6. Rust WebSocket kline stream supervisor per chart.
-7. Rust MA/EMA/BOLL/MACD/RSI/ATR/KDJ/Supertrend calculation path.
+7. Rust Volume/MA/EMA/BOLL/MACD/RSI/ATR/KDJ/Supertrend calculation and chart display path.
 8. CSV export and new-schema config import/export.
-9. Cache summary and clear-current-symbol workflow.
-10. SQLite-backed horizontal-line drawing persistence.
+9. Cache summary, clear-current-symbol workflow and per cached market/symbol/interval clear action.
+10. SQLite-backed drawing persistence for horizontal line, trend line, vertical line, rectangle, text and measurement annotations.
 11. Watchlist add/remove/reorder and chart PNG export.
 12. Benchmark command and CLI with REST smoke fallback plus real Binance Public Data archive dataset export.
 13. Large-chart verification for 100k full interaction and 1M LOD basic browsing.
 14. Spot/USD-M market-data smoke covering history, market info, symbols and live WebSocket kline.
+15. Cache reads now require enough rows to satisfy the requested limit before returning a SQLite hit, so small old cache windows do not block larger chart or verification requests from being refetched.
 
 Remaining MVP migration work is tracked in `docs/tauri-rust-mvp-migration.md`.
 
 Known first-stage degradations:
 
-1. Drawing editing is limited to saved horizontal price lines.
-2. Indicator configuration is limited to global visibility toggles.
+1. Drawing drag/edit handles, style editing, lock/hide and undo/redo remain pending; creation/loading/deletion now covers the core annotation types.
+2. Indicator configuration is limited to global visibility toggles; per-chart parameter/style editing is still pending.
 3. Symbol search is compact and ticker-backed.
-4. Full cache range-completeness/task UI remains degraded beyond cache summary and clear-current-symbol.
+4. Full cache range-completeness/task queue UI remains degraded beyond summary and clear actions.
+5. 1M overlay indicators are best-effort only; 100k remains the full-interaction verification target.

@@ -40,20 +40,21 @@ Rollback path:
 
 ## Known First-Stage Degradations
 
-1. Drawing tools are limited to SQLite-backed horizontal price lines; advanced trend-line, rectangle, text, measurement and drag editing remain degraded.
-2. Indicator configuration is limited to global visibility toggles; full per-chart parameter/style editing is still pending.
-3. 1M chart browsing uses LOD/downsampling and omits overlay indicators; this is the accepted reduced-overlay behavior for the first-stage basic-browsing target.
-4. Full range-completeness cache task UI remains degraded; the first-stage UI exposes cache summary and clear-current-symbol.
-5. Full Linux AppImage bundling should be produced in Ubuntu/CI because local Arch `linuxdeploy` can fail on `.relr.dyn` sections.
+1. Drawing creation/loading/deletion now covers horizontal line, trend line, vertical line, rectangle, text and measurement annotations, but drag/edit handles, style editing, lock/hide and undo/redo remain pending.
+2. Indicator display now covers Volume, MA, EMA, BOLL, MACD, RSI, ATR, KDJ and Supertrend; full per-chart parameter/style editing is still pending.
+3. 1M chart browsing uses LOD/downsampling and overlay indicators remain best-effort; 100k remains the release-gating full-interaction target.
+4. Full range-completeness cache task queue UI remains degraded; the first-stage UI exposes cache summary plus current-symbol and per cached interval clear actions.
+5. Direct Binance REST/WebSocket smoke can fail in restricted networks, including HTTP 451 responses. Treat that as an external blocker when the Public Data archive verification and local checks pass.
+6. Full Linux AppImage bundling should be produced in Ubuntu/CI because local Arch `linuxdeploy` can fail on `.relr.dyn` sections.
 
 ## Implemented In The Current Slice
 
 1. Binance REST history for Spot/USD-M and Rust-managed WebSocket kline updates.
-2. SQLite K-line cache read/write, summary and clear-current-symbol UI.
+2. SQLite K-line cache read/write, summary, clear-current-symbol UI and per cached interval clear action.
 3. CSV export for the current chart request.
 4. New-schema JSON config export/import for settings, watchlist and drawings.
-5. Core drawing persistence and rendering for horizontal price lines.
+5. Core drawing persistence and rendering for horizontal lines, trend lines, vertical lines, rectangles, text labels and measurements.
 6. Time-linked crosshair/visible-range synchronization between the two chart panes.
 7. Rust-backed 24h market info, USD-M mark/index/funding data and compact symbol search/leaderboards.
-8. Watchlist add/remove/reorder, chart PNG export and Supertrend calculation/rendering.
+8. Watchlist add/remove/reorder, chart PNG export and Volume/MA/EMA/BOLL/MACD/RSI/ATR/KDJ/Supertrend calculation/rendering.
 9. Real Binance Public Data chart evidence for 100k full interaction and 1M LOD basic browsing.

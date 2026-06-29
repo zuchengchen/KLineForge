@@ -32,9 +32,10 @@ impl BinanceClient {
             Market::Spot => "/api/v3/klines",
             Market::UsdM => "/fapi/v1/klines",
         };
+        let binance_interval = binance_interval(&request.interval);
         let mut query: Vec<(&str, String)> = vec![
             ("symbol", request.symbol.to_uppercase()),
-            ("interval", request.interval.clone()),
+            ("interval", binance_interval.to_string()),
             (
                 "limit",
                 request.limit.unwrap_or(1_500).min(1_500).to_string(),
@@ -238,7 +239,7 @@ impl BinanceClient {
         let stream_name = format!(
             "{}@kline_{}",
             request.symbol.to_lowercase(),
-            request.interval.to_lowercase()
+            binance_interval(&request.interval)
         );
         let url = Url::parse(&format!("{}/{}", request.market.ws_base_url(), stream_name))?;
         let (stream, _) = connect_async(url.as_str()).await?;
@@ -477,6 +478,19 @@ fn parse_f64(value: &str) -> f64 {
     value.parse::<f64>().unwrap_or_default()
 }
 
+fn binance_interval(interval: &str) -> String {
+    let Some(unit) = interval.chars().last() else {
+        return interval.to_string();
+    };
+    let value = &interval[..interval.len().saturating_sub(unit.len_utf8())];
+
+    match unit {
+        'W' => format!("{value}w"),
+        'M' => format!("{value}M"),
+        _ => interval.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -505,6 +519,14 @@ mod tests {
         assert_eq!(kline.symbol, "BTCUSDT");
         assert_eq!(kline.close, "11");
         assert_eq!(kline.trade_count, 3);
+    }
+
+    #[test]
+    fn normalizes_binance_interval_without_breaking_months() {
+        assert_eq!(binance_interval("1W"), "1w");
+        assert_eq!(binance_interval("1M"), "1M");
+        assert_eq!(binance_interval("3m"), "3m");
+        assert_eq!(binance_interval("2h"), "2h");
     }
 
     #[test]

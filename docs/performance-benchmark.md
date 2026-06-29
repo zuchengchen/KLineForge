@@ -47,11 +47,11 @@ Large chart datasets are ignored by Git and should be distributed through CI art
 Latest local real archive results from June 29, 2026:
 
 ```text
-100k BTCUSDT USD-M 1m rows: fetch_parse=7306ms sqlite_write=4277ms sqlite_read=1585ms indicators=94ms
+100k BTCUSDT USD-M 1m rows: fetch_parse=33925ms sqlite_write=3958ms sqlite_read=1619ms indicators=93ms
 1m BTCUSDT USD-M 1m rows: fetch_parse=21525ms sqlite_write=41317ms sqlite_read=16036ms indicators=0ms
 ```
 
-The 1M chart dataset intentionally omits overlay indicator export for the basic-browsing target. The chart layer applies LOD/downsampling at this size and keeps indicators disabled for that path.
+The 1M chart dataset may omit overlay indicator export for the basic-browsing target. The chart layer applies LOD/downsampling at this size; 1M overlay indicators are best-effort and not a release gate.
 
 ## Large Chart Interaction
 
@@ -64,14 +64,14 @@ npm run verify:large-chart:100k
 npm run verify:large-chart:1m
 ```
 
-Latest local scripted interaction results from June 29, 2026:
+Latest local scripted interaction results from the current release-audit rerun on June 29, 2026:
 
 ```text
-100k: render_ready=3977ms interaction=840ms left_set_data=123ms right_set_data=116ms rows=100000 rendered=100000 lod=false passed=true
+100k: render_ready=4734ms interaction=984ms left_set_data=147ms right_set_data=126ms rows=100000 rendered=100000 lod=false passed=true
 1m: render_ready=3240ms interaction=818ms left_set_data=192ms right_set_data=155ms rows=1000000 rendered=142858 lod=true passed=true
 ```
 
-The 100k script verifies full MVP-relevant chart interaction on real data: dual chart render, pan/zoom, crosshair movement, indicator data handoff, horizontal-line drawing workflow, PNG export and CSV export. The 1M script verifies basic browsing on real data: dual chart render, pan/zoom, crosshair movement and LOD handoff.
+The 100k script verifies full MVP-relevant chart interaction on real data: dual chart render, pan/zoom, crosshair movement, indicator data handoff, drawing workflow, PNG export and CSV export. The 1M script verifies basic browsing on real data: dual chart render, pan/zoom, crosshair movement and LOD handoff.
 
 Artifacts:
 
@@ -90,11 +90,18 @@ Spot and USD-M market data are verified through the Rust backend client:
 npm run verify:market-data
 ```
 
-Local verification requires live Binance WebSocket K-lines to succeed. CI sets `KLINEFORGE_MARKET_SMOKE_ALLOW_LIVE_REST_FALLBACK=1`, so a transient WebSocket failure can fall back to the latest Binance REST K-line after retrying; the artifact records this as `binance-rest-ci-live-fallback` with the WebSocket error in the note. REST history, market info and symbol checks remain required when direct Binance network access succeeds.
+Local verification requires direct Binance REST and live Binance WebSocket K-lines to succeed. CI sets `KLINEFORGE_MARKET_SMOKE_ALLOW_LIVE_REST_FALLBACK=1`, so a transient WebSocket failure can fall back to the latest Binance REST K-line after retrying; the artifact records this as `binance-rest-ci-live-fallback` with the WebSocket error in the note. REST history, market info and symbol checks remain required when direct Binance network access succeeds.
 
 If the GitHub runner cannot reach Binance REST/WebSocket at all, the CI step writes a clearly marked `binance-public-data-monthly-archive` fallback report from the 100k real Binance Public Data dataset prepared earlier in the same workflow. This keeps CI reproducible while preserving local strict WebSocket evidence.
 
-Latest local result from June 29, 2026:
+Latest strict local attempt during the current release-audit rerun on June 29, 2026 was blocked by Binance REST HTTP 451 before the local client could complete the smoke:
+
+```text
+npm run verify:market-data
+Error: network error: HTTP status client error (451 ) for url (https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=10)
+```
+
+Last successful local result from June 29, 2026 before that network block:
 
 ```text
 spot: history=10 rows, market_info=ok, symbols=674 rows, live_kline=1879ms
@@ -115,10 +122,10 @@ npm run preview -- --port 4173
 npm run verify:render -- http://127.0.0.1:4173/
 ```
 
-Latest local render result:
+Latest local render result from the current release-audit rerun:
 
 ```text
-render_ready=1816ms chart_panes=2 canvases=14 non_blank_canvases=8 passed=true
+render_ready=1772ms chart_panes=2 canvases=46 non_blank_canvases=24 passed=true
 ```
 
 Artifacts:
@@ -149,5 +156,5 @@ If exact frame-rate measurement is not practical, record scripted timings plus m
 Remaining caveats:
 
 1. GitHub Actions has a workflow that prepares the 100k real archive dataset and runs the large-chart 100k smoke, but this repository-local run cannot prove the remote GitHub workflow has executed.
-2. Binance REST remains unstable in this environment; use Public Data archive scripts for required real-data evidence.
-3. 1M chart browsing uses LOD/downsampling and omits overlay indicators, which is the approved reduced-overlay behavior for the basic-browsing target.
+2. Binance REST can be blocked in this environment, including HTTP 451 responses; use Public Data archive scripts for required real-data evidence when direct REST/WebSocket smoke is externally blocked.
+3. 1M chart browsing uses LOD/downsampling and overlay indicators remain best-effort, while 100k remains the full-interaction release gate.

@@ -33,6 +33,7 @@ button {
   grid-template-columns: 260px minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
   background: #0c0f14;
   color: #d8e1ee;
 }
@@ -46,11 +47,15 @@ button {
 .sidebar {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid rgba(127, 146, 177, 0.22);
   background: #121720;
   padding: 14px;
+  scrollbar-gutter: stable;
 }
 
 .app--light .sidebar {
@@ -490,10 +495,21 @@ select {
   white-space: nowrap;
 }
 
+.cache-list button,
 .cache-list span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cache-list button {
+  min-height: 24px;
+  border: 1px solid rgba(127, 146, 177, 0.22);
+  border-radius: 6px;
+  background: rgba(127, 146, 177, 0.08);
+  color: inherit;
+  font-size: 12px;
+  text-align: left;
 }
 
 .leaderboards {

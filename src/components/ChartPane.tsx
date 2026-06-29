@@ -29,6 +29,7 @@ interface ChartPaneProps {
   indicatorSettings: Accessor<IndicatorSettings>;
   drawings: Accessor<DrawingObject[]>;
   liveStatus: Accessor<{ source: string; isClosed: boolean; time: number } | undefined>;
+  resetKey?: Accessor<string>;
   theme: Accessor<string>;
   syncCrosshair?: Accessor<{ time: number; price: number } | null>;
   syncRange?: Accessor<LogicalRange | null>;
@@ -51,10 +52,24 @@ export function ChartPane(props: ChartPaneProps) {
   let bollUpSeries: ISeriesApi<'Line'> | undefined;
   let bollMidSeries: ISeriesApi<'Line'> | undefined;
   let bollDownSeries: ISeriesApi<'Line'> | undefined;
+  let macdSeries: ISeriesApi<'Histogram'> | undefined;
+  let macdDifSeries: ISeriesApi<'Line'> | undefined;
+  let macdDeaSeries: ISeriesApi<'Line'> | undefined;
+  let rsiSeries: ISeriesApi<'Line'> | undefined;
+  let atrSeries: ISeriesApi<'Line'> | undefined;
+  let kdjKSeries: ISeriesApi<'Line'> | undefined;
+  let kdjDSeries: ISeriesApi<'Line'> | undefined;
+  let kdjJSeries: ISeriesApi<'Line'> | undefined;
   let supertrendSeries: ISeriesApi<'Line'> | undefined;
   let applyingExternalRange = false;
+  let externalRangeUnlockFrame: number | undefined;
+  let externalRangeUnlockFollowupFrame: number | undefined;
+  let latestResetKey: string | undefined;
+  let shouldFitNextData = true;
+  let previousInputPoints: ChartPoint[] | undefined;
   let currentLodApplied = false;
   const priceLines = new Map<string, IPriceLine>();
+  const drawingSeries = new Map<string, ISeriesApi<'Line'>>();
 
   const resize = () => {
     if (!containerRef.current || !chart) {
@@ -154,6 +169,51 @@ export function ChartPane(props: ChartPaneProps) {
       lineWidth: 2,
       priceLineVisible: false,
     });
+    macdSeries = chart.addSeries(HistogramSeries, {
+      color: '#22ab9444',
+      priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
+      priceScaleId: 'right',
+    }, 1);
+    macdDifSeries = chart.addSeries(LineSeries, {
+      color: '#f6c343',
+      lineWidth: 1,
+      priceLineVisible: false,
+    }, 1);
+    macdDeaSeries = chart.addSeries(LineSeries, {
+      color: '#38bdf8',
+      lineWidth: 1,
+      priceLineVisible: false,
+    }, 1);
+    rsiSeries = chart.addSeries(LineSeries, {
+      color: '#fb7185',
+      lineWidth: 1,
+      priceLineVisible: false,
+    }, 2);
+    atrSeries = chart.addSeries(LineSeries, {
+      color: '#14b8a6',
+      lineWidth: 1,
+      priceLineVisible: false,
+    }, 3);
+    kdjKSeries = chart.addSeries(LineSeries, {
+      color: '#f6c343',
+      lineWidth: 1,
+      priceLineVisible: false,
+    }, 4);
+    kdjDSeries = chart.addSeries(LineSeries, {
+      color: '#38bdf8',
+      lineWidth: 1,
+      priceLineVisible: false,
+    }, 4);
+    kdjJSeries = chart.addSeries(LineSeries, {
+      color: '#fb7185',
+      lineWidth: 1,
+      priceLineVisible: false,
+    }, 4);
+    chart.panes()[0]?.setStretchFactor(8);
+    chart.panes()[1]?.setStretchFactor(2);
+    chart.panes()[2]?.setStretchFactor(2);
+    chart.panes()[3]?.setStretchFactor(2);
+    chart.panes()[4]?.setStretchFactor(2);
     chart.priceScale('volume').applyOptions({
       scaleMargins: {
         top: 0.78,
@@ -185,6 +245,15 @@ export function ChartPane(props: ChartPaneProps) {
   });
 
   createEffect(() => {
+    const nextResetKey = props.resetKey?.();
+
+    if (nextResetKey !== latestResetKey) {
+      latestResetKey = nextResetKey;
+      shouldFitNextData = true;
+    }
+  });
+
+  createEffect(() => {
     if (!chart) {
       return;
     }
@@ -207,8 +276,16 @@ export function ChartPane(props: ChartPaneProps) {
     const startedAt = performance.now();
     const renderData = createRenderablePoints(points);
     const renderedPoints = renderData.points;
+    const dataReferenceChanged = points !== previousInputPoints;
+    const shouldFitContent = shouldAutoFitChartData({
+      dataReferenceChanged,
+      hasPreviousData: previousInputPoints !== undefined,
+      pendingReset: shouldFitNextData,
+      renderedRows: renderedPoints.length,
+    });
 
     currentLodApplied = renderData.lodApplied;
+    previousInputPoints = points;
 
     candleSeries?.setData(
       renderedPoints.map((point) => ({
@@ -220,17 +297,22 @@ export function ChartPane(props: ChartPaneProps) {
       })),
     );
     volumeSeries?.setData(
-      renderedPoints.map((point) => ({
-        time: point.time as Time,
-        value: point.volume,
-        color: point.close >= point.open ? '#22ab9444' : '#f2364544',
-      })),
+      props.indicatorSettings().volume
+        ? renderedPoints.map((point) => ({
+            time: point.time as Time,
+            value: point.volume,
+            color: point.close >= point.open ? '#22ab9444' : '#f2364544',
+          }))
+        : [],
     );
 
     const setDataMs = Math.round(performance.now() - startedAt);
 
     if (renderedPoints.length > 0) {
-      chart?.timeScale().fitContent();
+      if (shouldFitContent) {
+        chart?.timeScale().fitContent();
+        shouldFitNextData = false;
+      }
     }
 
     requestAnimationFrame(() => {
@@ -294,12 +376,56 @@ export function ChartPane(props: ChartPaneProps) {
         .filter((row) => typeof row.supertrend === 'number')
         .map((row) => ({ time: row.time as Time, value: row.supertrend ?? 0 })),
     );
+    macdSeries?.setData(
+      (settings.macd ? indicators : [])
+        .filter((row) => typeof row.macd === 'number')
+        .map((row) => ({
+          time: row.time as Time,
+          value: row.macd ?? 0,
+          color: (row.macd ?? 0) >= 0 ? '#22ab9466' : '#f2364566',
+        })),
+    );
+    macdDifSeries?.setData(
+      (settings.macd ? indicators : [])
+        .filter((row) => typeof row.macdDif === 'number')
+        .map((row) => ({ time: row.time as Time, value: row.macdDif ?? 0 })),
+    );
+    macdDeaSeries?.setData(
+      (settings.macd ? indicators : [])
+        .filter((row) => typeof row.macdDea === 'number')
+        .map((row) => ({ time: row.time as Time, value: row.macdDea ?? 0 })),
+    );
+    rsiSeries?.setData(
+      (settings.rsi ? indicators : [])
+        .filter((row) => typeof row.rsi14 === 'number')
+        .map((row) => ({ time: row.time as Time, value: row.rsi14 ?? 0 })),
+    );
+    atrSeries?.setData(
+      (settings.atr ? indicators : [])
+        .filter((row) => typeof row.atr14 === 'number')
+        .map((row) => ({ time: row.time as Time, value: row.atr14 ?? 0 })),
+    );
+    kdjKSeries?.setData(
+      (settings.kdj ? indicators : [])
+        .filter((row) => typeof row.kdjK === 'number')
+        .map((row) => ({ time: row.time as Time, value: row.kdjK ?? 0 })),
+    );
+    kdjDSeries?.setData(
+      (settings.kdj ? indicators : [])
+        .filter((row) => typeof row.kdjD === 'number')
+        .map((row) => ({ time: row.time as Time, value: row.kdjD ?? 0 })),
+    );
+    kdjJSeries?.setData(
+      (settings.kdj ? indicators : [])
+        .filter((row) => typeof row.kdjJ === 'number')
+        .map((row) => ({ time: row.time as Time, value: row.kdjJ ?? 0 })),
+    );
   });
 
   createEffect(() => {
     const drawings = props.drawings();
 
-    if (!candleSeries) {
+    if (!chart || !candleSeries) {
       return;
     }
 
@@ -307,19 +433,13 @@ export function ChartPane(props: ChartPaneProps) {
       candleSeries.removePriceLine(line);
     }
     priceLines.clear();
+    for (const series of drawingSeries.values()) {
+      chart.removeSeries(series);
+    }
+    drawingSeries.clear();
 
     for (const drawing of drawings) {
-      if (drawing.drawingType !== 'horizontal-line' || typeof drawing.payload.price !== 'number') {
-        continue;
-      }
-
-      const line = candleSeries.createPriceLine({
-        price: drawing.payload.price,
-        color: drawing.payload.color ?? '#f6c343',
-        lineWidth: 1,
-        title: drawing.payload.text ?? drawing.drawingType,
-      });
-      priceLines.set(drawing.id, line);
+      renderDrawing(chart, candleSeries, priceLines, drawingSeries, drawing);
     }
   });
 
@@ -345,31 +465,63 @@ export function ChartPane(props: ChartPaneProps) {
       return;
     }
 
+    if (areLogicalRangesEqual(chart.timeScale().getVisibleLogicalRange(), range)) {
+      return;
+    }
+
     applyingExternalRange = true;
     chart.timeScale().setVisibleLogicalRange(range);
-    queueMicrotask(() => {
-      applyingExternalRange = false;
-    });
+    scheduleExternalRangeUnlock();
   });
 
   onCleanup(() => {
     window.removeEventListener('resize', resize);
+    cancelExternalRangeUnlock();
     if (candleSeries) {
       for (const line of priceLines.values()) {
         candleSeries.removePriceLine(line);
       }
     }
     priceLines.clear();
+    if (chart) {
+      for (const series of drawingSeries.values()) {
+        chart.removeSeries(series);
+      }
+    }
+    drawingSeries.clear();
     chart?.remove();
     chart = undefined;
   });
+
+  function cancelExternalRangeUnlock() {
+    if (externalRangeUnlockFrame !== undefined) {
+      window.cancelAnimationFrame(externalRangeUnlockFrame);
+      externalRangeUnlockFrame = undefined;
+    }
+
+    if (externalRangeUnlockFollowupFrame !== undefined) {
+      window.cancelAnimationFrame(externalRangeUnlockFollowupFrame);
+      externalRangeUnlockFollowupFrame = undefined;
+    }
+  }
+
+  function scheduleExternalRangeUnlock() {
+    cancelExternalRangeUnlock();
+    externalRangeUnlockFrame = window.requestAnimationFrame(() => {
+      externalRangeUnlockFrame = undefined;
+      externalRangeUnlockFollowupFrame = window.requestAnimationFrame(() => {
+        externalRangeUnlockFollowupFrame = undefined;
+        applyingExternalRange = false;
+      });
+    });
+  }
 
   return (
     <section class="chart-pane">
       <header class="chart-pane__header">
         <span>{props.title}</span>
         <span>
-          {props.liveStatus()?.source ?? 'history'} · {props.liveStatus()?.isClosed ? 'closed' : 'live'} · MA/BOLL/EMA/ST/VOL
+          {props.liveStatus()?.source ?? 'history'} · {props.liveStatus()?.isClosed ? 'closed' : 'live'} · VOL/MA/EMA/BOLL/MACD/RSI/ATR/KDJ/ST
         </span>
       </header>
       <div ref={(element) => { containerRef.current = element; }} class="chart-pane__surface" />
@@ -377,8 +529,142 @@ export function ChartPane(props: ChartPaneProps) {
   );
 }
 
+function renderDrawing(
+  chart: IChartApi,
+  candleSeries: ISeriesApi<'Candlestick'>,
+  priceLines: Map<string, IPriceLine>,
+  drawingSeries: Map<string, ISeriesApi<'Line'>>,
+  drawing: DrawingObject,
+) {
+  const color = drawing.payload.color ?? '#f6c343';
+
+  if (drawing.drawingType === 'horizontal-line' && typeof drawing.payload.price === 'number') {
+    const line = candleSeries.createPriceLine({
+      price: drawing.payload.price,
+      color,
+      lineWidth: 1,
+      title: drawing.payload.text ?? drawing.drawingType,
+    });
+    priceLines.set(drawing.id, line);
+    return;
+  }
+
+  const points = drawingPoints(drawing);
+
+  if (!points) {
+    return;
+  }
+
+  if (drawing.drawingType === 'rectangle') {
+    const [start, end] = points;
+    const startEdgeEnd = start.time === end.time ? start.time + 1 : start.time + Math.max(1, Math.round((end.time - start.time) * 0.01));
+    const endEdgeEnd = end.time + Math.max(1, Math.round((end.time - start.time) * 0.01));
+    addDrawingLine(chart, drawingSeries, `${drawing.id}:top`, color, [
+      { time: start.time as Time, value: start.value },
+      { time: end.time as Time, value: start.value },
+    ]);
+    addDrawingLine(chart, drawingSeries, `${drawing.id}:right`, color, [
+      { time: end.time as Time, value: start.value },
+      { time: endEdgeEnd as Time, value: end.value },
+    ]);
+    addDrawingLine(chart, drawingSeries, `${drawing.id}:bottom`, color, [
+      { time: start.time as Time, value: end.value },
+      { time: end.time as Time, value: end.value },
+    ]);
+    addDrawingLine(chart, drawingSeries, `${drawing.id}:left`, color, [
+      { time: start.time as Time, value: start.value },
+      { time: startEdgeEnd as Time, value: end.value },
+    ]);
+    return;
+  }
+
+  if (drawing.drawingType === 'text') {
+    const line = candleSeries.createPriceLine({
+      price: points[0].value,
+      color,
+      lineWidth: 1,
+      title: drawing.payload.text ?? 'Text',
+    });
+    priceLines.set(drawing.id, line);
+    return;
+  }
+
+  addDrawingLine(chart, drawingSeries, drawing.id, color, points.map((point) => ({ time: point.time as Time, value: point.value })));
+
+  if (drawing.drawingType === 'measurement' && drawing.payload.text) {
+    const line = candleSeries.createPriceLine({
+      price: points[1].value,
+      color,
+      lineWidth: 1,
+      title: drawing.payload.text,
+    });
+    priceLines.set(`${drawing.id}:label`, line);
+  }
+}
+
+function drawingPoints(drawing: DrawingObject): [{ time: number; value: number }, { time: number; value: number }] | null {
+  const { startTime, startPrice, endTime, endPrice } = drawing.payload;
+
+  if (
+    typeof startTime !== 'number' ||
+    typeof startPrice !== 'number' ||
+    typeof endTime !== 'number' ||
+    typeof endPrice !== 'number'
+  ) {
+    return null;
+  }
+
+  return [
+    { time: startTime, value: startPrice },
+    { time: endTime === startTime ? endTime + 1 : endTime, value: endPrice },
+  ];
+}
+
+function addDrawingLine(
+  chart: IChartApi,
+  drawingSeries: Map<string, ISeriesApi<'Line'>>,
+  id: string,
+  color: string,
+  data: { time: Time; value: number }[],
+) {
+  const series = chart.addSeries(LineSeries, {
+    color,
+    lineWidth: 2,
+    lastValueVisible: false,
+    priceLineVisible: false,
+  });
+
+  series.setData(data);
+  drawingSeries.set(id, series);
+}
+
 const maxDetailedRows = 200_000;
 const maxLodRows = 160_000;
+
+export function shouldAutoFitChartData(params: {
+  dataReferenceChanged: boolean;
+  hasPreviousData: boolean;
+  pendingReset: boolean;
+  renderedRows: number;
+}) {
+  if (params.renderedRows <= 0) {
+    return false;
+  }
+
+  return !params.hasPreviousData || (params.pendingReset && params.dataReferenceChanged);
+}
+
+export function areLogicalRangesEqual(
+  first: LogicalRange | null | undefined,
+  second: LogicalRange | null | undefined,
+  tolerance = 0.0001,
+) {
+  if (!first || !second) {
+    return first === second;
+  }
+
+  return Math.abs(first.from - second.from) <= tolerance && Math.abs(first.to - second.to) <= tolerance;
+}
 
 function createRenderablePoints(points: ChartPoint[]) {
   if (points.length <= maxDetailedRows) {

@@ -12,9 +12,14 @@ export interface AppSettings {
 }
 
 export interface IndicatorSettings {
+  volume: boolean;
   ma: boolean;
   ema: boolean;
   boll: boolean;
+  macd: boolean;
+  rsi: boolean;
+  atr: boolean;
+  kdj: boolean;
   supertrend: boolean;
 }
 
@@ -146,6 +151,10 @@ export interface DrawingQuery {
 
 export interface DrawingPayload {
   price?: number;
+  startTime?: number;
+  startPrice?: number;
+  endTime?: number;
+  endPrice?: number;
   text?: string;
   color?: string;
 }

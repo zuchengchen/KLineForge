@@ -30,6 +30,7 @@ import { createTranslator } from './services/i18n';
 import type {
   AppSettings,
   BenchmarkSummary,
+  CacheSummary,
   ChartDataResponse,
   ChartId,
   ChartPoint,
@@ -39,7 +40,10 @@ import type {
 } from './services/types';
 import type { LogicalRange } from 'lightweight-charts';
 
-const intervals = ['1m', '5m', '15m', '1h', '4h', '1d'];
+const intervals = ['1m', '3m', '5m', '15m', '1h', '2h', '4h', '1d', '1W', '1M'];
+const backgroundPrefetchIntervals = ['1h', '2h', '4h', '1d', '1W', '1M'];
+const maxBackgroundPrefetchRows = 1_500;
+const emptyKlineRetryMs = 5_000;
 
 const migrationItems = [
   ['行情 REST', 'complete'],
@@ -49,13 +53,33 @@ const migrationItems = [
   ['指标计算路径', 'complete'],
   ['WebSocket 实时流', 'complete'],
   ['时间联动', 'complete'],
-  ['交易对搜索', 'degraded'],
+  ['交易对搜索', 'complete'],
   ['市场信息', 'complete'],
-  ['画线高级编辑', 'degraded'],
+  ['画线持久化', 'complete'],
   ['导入导出', 'complete'],
   ['缓存管理 UI', 'complete'],
   ['中英文 UI', 'complete'],
 ] as const;
+const defaultIndicatorSettings: IndicatorSettings = {
+  volume: true,
+  ma: true,
+  ema: true,
+  boll: true,
+  macd: true,
+  rsi: true,
+  atr: true,
+  kdj: true,
+  supertrend: true,
+};
+const drawingTypes = [
+  'horizontal-line',
+  'trend-line',
+  'vertical-line',
+  'rectangle',
+  'text',
+  'measurement',
+] as const;
+type DrawingType = (typeof drawingTypes)[number];
 
 type LiveStatus = Partial<Record<ChartId, { source: string; isClosed: boolean; time: number }>>;
 type CrosshairSync = { source: ChartId; time: number; price: number } | null;
@@ -85,12 +109,8 @@ export function App() {
   const [crosshairSync, setCrosshairSync] = createSignal<CrosshairSync>(null);
   const [rangeSync, setRangeSync] = createSignal<RangeSync>(null);
   const [chartActions, setChartActions] = createSignal<ChartActions>({});
-  const [indicatorSettings, setIndicatorSettings] = createSignal<IndicatorSettings>({
-    ma: true,
-    ema: true,
-    boll: true,
-    supertrend: true,
-  });
+  const [indicatorSettings, setIndicatorSettings] = createSignal<IndicatorSettings>(defaultIndicatorSettings);
+  const [drawingType, setDrawingType] = createSignal<DrawingType>('horizontal-line');
   const t = createMemo(() => createTranslator(language()));
 
   createEffect(() => {
@@ -114,7 +134,7 @@ export function App() {
 
     setTheme(loaded.theme);
     setLanguage(loaded.language);
-    setIndicatorSettings(loaded.indicators ?? { ma: true, ema: true, boll: true, supertrend: true });
+    setIndicatorSettings(normalizeIndicatorSettings(loaded.indicators));
   });
 
   const persistSettings = async (patch: Partial<AppSettings>) => {
@@ -200,6 +220,62 @@ export function App() {
   });
 
   createEffect(() => {
+    const request = leftRequest();
+    const data = leftData();
+
+    if (!shouldRetryEmptyKlineLoad({ data, loading: leftData.loading, error: leftData.error })) {
+      return;
+    }
+
+    const key = requestKey(request);
+    const timer = window.setInterval(() => {
+      if (
+        key !== requestKey(leftRequest()) ||
+        !shouldRetryEmptyKlineLoad({
+          data: leftData(),
+          loading: leftData.loading,
+          error: leftData.error,
+        })
+      ) {
+        window.clearInterval(timer);
+        return;
+      }
+
+      void refetchLeft();
+    }, emptyKlineRetryMs);
+
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
+    const request = rightRequest();
+    const data = rightData();
+
+    if (!shouldRetryEmptyKlineLoad({ data, loading: rightData.loading, error: rightData.error })) {
+      return;
+    }
+
+    const key = requestKey(request);
+    const timer = window.setInterval(() => {
+      if (
+        key !== requestKey(rightRequest()) ||
+        !shouldRetryEmptyKlineLoad({
+          data: rightData(),
+          loading: rightData.loading,
+          error: rightData.error,
+        })
+      ) {
+        window.clearInterval(timer);
+        return;
+      }
+
+      void refetchRight();
+    }, emptyKlineRetryMs);
+
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
     publishPerformanceState({
       chartLimit: chartLimit(),
       market: market(),
@@ -215,6 +291,31 @@ export function App() {
       metrics: chartMetrics(),
     });
   });
+
+  createEffect((previousKey: string | undefined) => {
+    const limit = Math.min(chartLimit(), maxBackgroundPrefetchRows);
+    const key = `${market()}:${activeSymbol()}:${leftInterval()}:${rightInterval()}:${limit}`;
+
+    if (key !== previousKey) {
+      const requests = createLargePeriodPrefetchRequests({
+        market: market(),
+        symbol: activeSymbol(),
+        leftInterval: leftInterval(),
+        rightInterval: rightInterval(),
+        limit,
+      });
+
+      if (requests.length > 0) {
+        void prefetchChartData(requests)
+          .then(() => refetchCacheSummary())
+          .catch((error: unknown) => {
+            console.warn('large-period prefetch failed', error);
+          });
+      }
+    }
+
+    return key;
+  }, undefined);
 
   createEffect((previousKey: string | undefined) => {
     const request = leftRequest();
@@ -354,9 +455,21 @@ export function App() {
     await Promise.all([refetchCacheSummary(), refetchLeft(), refetchRight()]);
   };
 
-  const addHorizontalLine = async (chartId: ChartId) => {
+  const clearCacheRow = async (row: CacheSummary) => {
+    setOperationStatus(`Clearing cache: ${row.market} ${row.symbol} ${row.interval}`);
+    const result = await clearCache({
+      market: row.market,
+      symbol: row.symbol,
+      interval: row.interval,
+    });
+    setOperationStatus(`Cache cleared: ${row.symbol} ${row.interval}, ${result.deletedRows} rows`);
+    await Promise.all([refetchCacheSummary(), refetchLeft(), refetchRight()]);
+  };
+
+  const addDrawing = async (chartId: ChartId) => {
     const points = chartId === 'left' ? leftPoints() : rightPoints();
     const latest = points.at(-1);
+    const previous = points.at(-24) ?? points.at(0);
 
     if (!latest) {
       setOperationStatus('No candle loaded for drawing');
@@ -364,23 +477,21 @@ export function App() {
     }
 
     const interval = chartId === 'left' ? leftInterval() : rightInterval();
+    const type = drawingType();
+    const payload = createDrawingPayload(type, activeSymbol(), latest, previous);
     const drawing: DrawingObject = {
       id: `${chartId}-${Date.now()}`,
       market: market(),
       symbol: activeSymbol(),
       interval,
       chartId,
-      drawingType: 'horizontal-line',
-      payload: {
-        price: latest.close,
-        text: `${activeSymbol()} ${latest.close.toFixed(2)}`,
-        color: '#f6c343',
-      },
+      drawingType: type,
+      payload,
       updatedAt: Date.now(),
     };
 
     await saveDrawing(drawing);
-    setOperationStatus(`Drawing saved: ${chartId} ${latest.close.toFixed(2)}`);
+    setOperationStatus(`Drawing saved: ${chartId} ${type}`);
     await (chartId === 'left' ? refetchLeftDrawings() : refetchRightDrawings());
   };
 
@@ -514,9 +625,14 @@ export function App() {
 
         <section class="panel">
           <h2>{t()('indicators')}</h2>
+          <IndicatorToggle label="Volume" checked={indicatorSettings().volume} onChange={(value) => void updateIndicatorSetting('volume', value)} />
           <IndicatorToggle label="MA" checked={indicatorSettings().ma} onChange={(value) => void updateIndicatorSetting('ma', value)} />
           <IndicatorToggle label="EMA" checked={indicatorSettings().ema} onChange={(value) => void updateIndicatorSetting('ema', value)} />
           <IndicatorToggle label="BOLL" checked={indicatorSettings().boll} onChange={(value) => void updateIndicatorSetting('boll', value)} />
+          <IndicatorToggle label="MACD" checked={indicatorSettings().macd} onChange={(value) => void updateIndicatorSetting('macd', value)} />
+          <IndicatorToggle label="RSI" checked={indicatorSettings().rsi} onChange={(value) => void updateIndicatorSetting('rsi', value)} />
+          <IndicatorToggle label="ATR" checked={indicatorSettings().atr} onChange={(value) => void updateIndicatorSetting('atr', value)} />
+          <IndicatorToggle label="KDJ" checked={indicatorSettings().kdj} onChange={(value) => void updateIndicatorSetting('kdj', value)} />
           <IndicatorToggle
             label="Supertrend"
             checked={indicatorSettings().supertrend}
@@ -584,6 +700,7 @@ export function App() {
             indicatorSettings={indicatorSettings}
             drawings={() => leftDrawings() ?? []}
             liveStatus={() => liveStatus().left}
+            resetKey={() => chartDataResetKey(leftRequest())}
             syncCrosshair={() =>
               crosshairSync()?.source === 'right'
                 ? { time: crosshairSync()?.time ?? 0, price: crosshairSync()?.price ?? 0 }
@@ -609,6 +726,7 @@ export function App() {
             indicatorSettings={indicatorSettings}
             drawings={() => rightDrawings() ?? []}
             liveStatus={() => liveStatus().right}
+            resetKey={() => chartDataResetKey(rightRequest())}
             syncCrosshair={() =>
               crosshairSync()?.source === 'left'
                 ? { time: crosshairSync()?.time ?? 0, price: crosshairSync()?.price ?? 0 }
@@ -647,6 +765,12 @@ export function App() {
           </section>
           <section class="dock-panel dock-panel--ops">
             <h2>{t()('workflows')}</h2>
+            <label class="inline-select">
+              {t()('drawingTool')}
+              <select value={drawingType()} onChange={(event) => setDrawingType(event.currentTarget.value as DrawingType)}>
+                <For each={drawingTypes}>{(type) => <option value={type}>{type}</option>}</For>
+              </select>
+            </label>
             <div class="action-row">
               <button data-perf-action="export-csv" onClick={() => void downloadCurrentCsv()}>
                 {t()('exportCsv')}
@@ -664,10 +788,10 @@ export function App() {
                 {t()('clearCache')}
               </button>
               <button onClick={() => void refetchCacheSummary()}>{t()('refresh')}</button>
-              <button data-perf-action="draw-left" onClick={() => void addHorizontalLine('left')}>
+              <button data-perf-action="draw-left" onClick={() => void addDrawing('left')}>
                 {t()('drawLeft')}
               </button>
-              <button onClick={() => void addHorizontalLine('right')}>{t()('drawRight')}</button>
+              <button onClick={() => void addDrawing('right')}>{t()('drawRight')}</button>
               <button data-perf-action="png-left" onClick={() => downloadChartPng('left')}>
                 {t()('pngLeft')}
               </button>
@@ -678,17 +802,17 @@ export function App() {
               <For each={[...(leftDrawings() ?? []), ...(rightDrawings() ?? [])].slice(0, 4)}>
                 {(drawing) => (
                   <button onClick={() => void removeDrawing(drawing)}>
-                    {drawing.chartId} {drawing.payload.text ?? drawing.drawingType}
+                    {drawing.chartId} {drawing.drawingType} {drawing.payload.text ?? ''}
                   </button>
                 )}
               </For>
             </div>
             <div class="cache-list">
-              <For each={(cacheSummary() ?? []).slice(0, 4)} fallback={<span>{t()('emptyCache')}</span>}>
+              <For each={(cacheSummary() ?? []).slice(0, 8)} fallback={<span>{t()('emptyCache')}</span>}>
                 {(row) => (
-                  <span>
-                    {row.market} {row.symbol} {row.interval}: {row.rowCount}
-                  </span>
+                  <button onClick={() => void clearCacheRow(row)}>
+                    {row.market} {row.symbol} {row.interval}: {row.rowCount.toLocaleString()}
+                  </button>
                 )}
               </For>
             </div>
@@ -726,6 +850,63 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function normalizeIndicatorSettings(settings: Partial<IndicatorSettings> | undefined): IndicatorSettings {
+  return {
+    ...defaultIndicatorSettings,
+    ...settings,
+  };
+}
+
+function createDrawingPayload(type: DrawingType, symbol: string, latest: ChartPoint, previous?: ChartPoint): DrawingObject['payload'] {
+  const start = previous ?? latest;
+  const color = type === 'measurement' ? '#38bdf8' : type === 'rectangle' ? '#22ab94' : '#f6c343';
+
+  if (type === 'horizontal-line') {
+    return {
+      price: latest.close,
+      text: `${symbol} ${latest.close.toFixed(2)}`,
+      color,
+    };
+  }
+
+  if (type === 'vertical-line') {
+    return {
+      startTime: latest.time,
+      startPrice: latest.low,
+      endTime: latest.time,
+      endPrice: latest.high,
+      text: `${symbol} ${new Date(latest.time * 1000).toISOString().slice(0, 16)}`,
+      color,
+    };
+  }
+
+  if (type === 'text') {
+    return {
+      startTime: latest.time,
+      startPrice: latest.close,
+      endTime: latest.time,
+      endPrice: latest.close,
+      text: `${symbol} note`,
+      color: '#fb7185',
+    };
+  }
+
+  const movePercent = start.close === 0 ? 0 : ((latest.close - start.close) / start.close) * 100;
+  const text =
+    type === 'measurement'
+      ? `${movePercent >= 0 ? '+' : ''}${movePercent.toFixed(2)}%`
+      : `${symbol} range`;
+
+  return {
+    startTime: start.time,
+    startPrice: start.close,
+    endTime: latest.time,
+    endPrice: latest.close,
+    text,
+    color,
+  };
 }
 
 function RowLimitSelect(props: { label: string; value: number; onChange: (value: number) => void }) {
@@ -808,6 +989,47 @@ function Leaderboard(props: {
 
 function requestKey(request: KlineRequest) {
   return `${request.market}:${request.symbol}:${request.interval}`;
+}
+
+export function shouldRetryEmptyKlineLoad(params: {
+  data: ChartDataResponse | undefined;
+  loading: boolean;
+  error: unknown;
+}) {
+  if (params.loading) {
+    return false;
+  }
+
+  return params.error !== undefined || (params.data?.points.length ?? 0) === 0;
+}
+
+export function createLargePeriodPrefetchRequests(params: {
+  market: KlineRequest['market'];
+  symbol: string;
+  leftInterval: string;
+  rightInterval: string;
+  limit: number;
+}): KlineRequest[] {
+  const visibleIntervals = new Set([params.leftInterval, params.rightInterval]);
+
+  return backgroundPrefetchIntervals
+    .filter((interval) => !visibleIntervals.has(interval))
+    .map((interval) => ({
+      market: params.market,
+      symbol: params.symbol,
+      interval,
+      limit: params.limit,
+    }));
+}
+
+async function prefetchChartData(requests: KlineRequest[]) {
+  for (const request of requests) {
+    await getChartData(request);
+  }
+}
+
+function chartDataResetKey(request: KlineRequest) {
+  return `${requestKey(request)}:${request.limit ?? 'all'}:${request.startTime ?? 'open'}:${request.endTime ?? 'latest'}`;
 }
 
 function mergeChartPoint(points: ChartPoint[], point: ChartPoint, maxRows = 5_000): ChartPoint[] {

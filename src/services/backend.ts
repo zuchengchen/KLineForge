@@ -41,20 +41,7 @@ export async function getHealth(): Promise<HealthStatus> {
 
 export async function getSettings(): Promise<AppSettings> {
   if (!isTauriRuntime) {
-    return {
-      market: 'usdM',
-      symbol: 'BTCUSDT',
-      leftInterval: '5m',
-      rightInterval: '1h',
-      theme: 'dark',
-      language: 'zh',
-      indicators: {
-        ma: true,
-        ema: true,
-        boll: true,
-        supertrend: true,
-      },
-    };
+    return previewSettings;
   }
 
   return invoke<AppSettings>('get_settings');
@@ -62,7 +49,12 @@ export async function getSettings(): Promise<AppSettings> {
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   if (!isTauriRuntime) {
-    return settings;
+    previewSettings = {
+      ...settings,
+      indicators: normalizePreviewIndicatorSettings(settings.indicators),
+    };
+
+    return previewSettings;
   }
 
   return invoke<AppSettings>('save_settings', { settings });
@@ -70,7 +62,7 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
 
 export async function getWatchlist(market: Market): Promise<string[]> {
   if (!isTauriRuntime) {
-    return ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'];
+    return [...previewWatchlists[market]];
   }
 
   return invoke<string[]>('get_watchlist', { market });
@@ -78,7 +70,13 @@ export async function getWatchlist(market: Market): Promise<string[]> {
 
 export async function addWatchlistSymbol(request: WatchlistMutation): Promise<string[]> {
   if (!isTauriRuntime) {
-    return ['BTCUSDT', 'ETHUSDT', request.symbol.toUpperCase()];
+    const symbol = request.symbol.toUpperCase();
+
+    if (!previewWatchlists[request.market].includes(symbol)) {
+      previewWatchlists[request.market] = [...previewWatchlists[request.market], symbol];
+    }
+
+    return [...previewWatchlists[request.market]];
   }
 
   return invoke<string[]>('add_watchlist_symbol', { request });
@@ -86,9 +84,11 @@ export async function addWatchlistSymbol(request: WatchlistMutation): Promise<st
 
 export async function removeWatchlistSymbol(request: WatchlistMutation): Promise<string[]> {
   if (!isTauriRuntime) {
-    return ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'].filter(
+    previewWatchlists[request.market] = previewWatchlists[request.market].filter(
       (symbol) => symbol !== request.symbol.toUpperCase(),
     );
+
+    return [...previewWatchlists[request.market]];
   }
 
   return invoke<string[]>('remove_watchlist_symbol', { request });
@@ -96,6 +96,8 @@ export async function removeWatchlistSymbol(request: WatchlistMutation): Promise
 
 export async function reorderWatchlist(request: WatchlistReorderRequest): Promise<string[]> {
   if (!isTauriRuntime) {
+    previewWatchlists[request.market] = request.symbols.map((symbol) => symbol.toUpperCase());
+
     return request.symbols;
   }
 
@@ -213,7 +215,13 @@ export async function exportKlinesCsv(request: KlineRequest): Promise<CsvExport>
 
 export async function exportConfig(): Promise<string> {
   if (!isTauriRuntime) {
-    return JSON.stringify({ schemaVersion: 1, exportedAt: Date.now(), settings: await getSettings(), watchlist: [] }, null, 2);
+    return JSON.stringify({
+      schemaVersion: 1,
+      exportedAt: Date.now(),
+      settings: await getSettings(),
+      watchlist: await getWatchlist(previewSettings.market),
+      drawings: previewDrawings,
+    }, null, 2);
   }
 
   return invoke<string>('export_config');
@@ -221,10 +229,31 @@ export async function exportConfig(): Promise<string> {
 
 export async function importConfig(content: string): Promise<ConfigImportResult> {
   if (!isTauriRuntime) {
+    const config = JSON.parse(content) as Partial<{
+      settings: AppSettings;
+      watchlist: string[];
+      drawings: DrawingObject[];
+    }>;
+
+    if (config.settings) {
+      previewSettings = {
+        ...config.settings,
+        indicators: normalizePreviewIndicatorSettings(config.settings.indicators),
+      };
+    }
+
+    if (Array.isArray(config.watchlist)) {
+      previewWatchlists[previewSettings.market] = config.watchlist.map((symbol) => symbol.toUpperCase());
+    }
+
+    if (Array.isArray(config.drawings)) {
+      previewDrawings = config.drawings;
+    }
+
     return {
       settingsImported: content.trim().length > 0,
-      watchlistCount: 0,
-      drawingCount: 0,
+      watchlistCount: config.watchlist?.length ?? 0,
+      drawingCount: config.drawings?.length ?? 0,
     };
   }
 
@@ -327,7 +356,48 @@ export async function runPerformanceBenchmark(request: KlineRequest): Promise<Be
 }
 
 const previewDatasetCache = new Map<string, Promise<ChartDatasetExport | null>>();
+let previewSettings: AppSettings = {
+  market: 'usdM',
+  symbol: 'BTCUSDT',
+  leftInterval: '5m',
+  rightInterval: '1h',
+  theme: 'dark',
+  language: 'zh',
+  indicators: defaultIndicatorSettings(),
+};
+const previewWatchlists: Record<Market, string[]> = {
+  spot: ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'],
+  usdM: ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'],
+};
 let previewDrawings: DrawingObject[] = [];
+
+function defaultIndicatorSettings(): AppSettings['indicators'] {
+  return {
+    volume: true,
+    ma: true,
+    ema: true,
+    boll: true,
+    macd: true,
+    rsi: true,
+    atr: true,
+    kdj: true,
+    supertrend: true,
+  };
+}
+
+function normalizePreviewIndicatorSettings(settings: Partial<AppSettings['indicators']> | undefined): AppSettings['indicators'] {
+  return {
+    volume: settings?.volume ?? true,
+    ma: settings?.ma ?? true,
+    ema: settings?.ema ?? true,
+    boll: settings?.boll ?? true,
+    macd: settings?.macd ?? true,
+    rsi: settings?.rsi ?? true,
+    atr: settings?.atr ?? true,
+    kdj: settings?.kdj ?? true,
+    supertrend: settings?.supertrend ?? true,
+  };
+}
 
 async function loadPreviewDataset(request: KlineRequest): Promise<ChartDatasetExport | null> {
   const requestedRows = Math.max(request.limit ?? 0, readPerfRowsFromUrl());
@@ -377,7 +447,7 @@ function readPerfRowsFromUrl() {
 }
 
 function createPreviewChartData(request: KlineRequest): ChartDataResponse {
-  const intervalSeconds = request.interval.endsWith('h') ? Number.parseInt(request.interval, 10) * 3600 : 300;
+  const intervalSeconds = intervalToSeconds(request.interval);
   const count = request.limit ?? 600;
   const now = Math.floor(Date.now() / 1000 / intervalSeconds) * intervalSeconds;
   const base = request.symbol.startsWith('BTC') ? 60_000 : 2_500;
@@ -404,4 +474,34 @@ function createPreviewChartData(request: KlineRequest): ChartDataResponse {
     source: 'preview-generated',
     cached: false,
   };
+}
+
+function intervalToSeconds(interval: string) {
+  const value = Number.parseInt(interval, 10);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return 300;
+  }
+
+  if (interval.endsWith('m')) {
+    return value * 60;
+  }
+
+  if (interval.endsWith('h')) {
+    return value * 60 * 60;
+  }
+
+  if (interval.endsWith('d')) {
+    return value * 24 * 60 * 60;
+  }
+
+  if (interval.endsWith('w') || interval.endsWith('W')) {
+    return value * 7 * 24 * 60 * 60;
+  }
+
+  if (interval.endsWith('M')) {
+    return value * 30 * 24 * 60 * 60;
+  }
+
+  return 300;
 }

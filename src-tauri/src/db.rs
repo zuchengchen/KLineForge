@@ -367,4 +367,46 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].symbol, "BTCUSDT");
     }
+
+    #[tokio::test]
+    async fn read_klines_reports_partial_cache_by_requested_limit() {
+        let db = Database::memory().await.expect("memory db");
+        let rows: Vec<Kline> = (0..2)
+            .map(|index| Kline {
+                market: "usdM".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                interval: "1m".to_string(),
+                open_time: index * 60_000,
+                close_time: index * 60_000 + 59_999,
+                open: "1".to_string(),
+                high: "2".to_string(),
+                low: "0.5".to_string(),
+                close: "1.5".to_string(),
+                volume: "42".to_string(),
+                quote_volume: "84".to_string(),
+                trade_count: 7,
+                taker_buy_base_volume: "20".to_string(),
+                taker_buy_quote_volume: "40".to_string(),
+                is_closed: true,
+                source: "test".to_string(),
+                updated_at: 2,
+            })
+            .collect();
+
+        db.write_klines(&rows).await.expect("write");
+        let cached = db
+            .read_klines(&KlineRequest {
+                market: Market::UsdM,
+                symbol: "BTCUSDT".to_string(),
+                interval: "1m".to_string(),
+                limit: Some(100_000),
+                start_time: None,
+                end_time: None,
+            })
+            .await
+            .expect("read");
+
+        assert_eq!(cached.len(), 2);
+        assert!(cached.len() < 100_000);
+    }
 }

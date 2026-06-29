@@ -11,12 +11,15 @@ use crate::{
         CacheSummary, ChartDataResponse, ChartId, ChartPoint, ConfigImportResult, CsvExport,
         DrawingObject, DrawingQuery, HealthStatus, IndicatorValue, KlineRequest, Leaderboards,
         LiveKlineEvent, LiveStreamRequest, Market, MarketInfoSnapshot, SymbolSummary,
-        WatchlistMutation, WatchlistReorderRequest,
+        WatchlistMutation, WatchlistReorderRequest, interval_ms,
     },
     error::{AppError, AppResult},
     indicators::calculate_default_indicators,
     state::AppState,
 };
+
+const BINANCE_KLINE_PAGE_LIMIT: u32 = 1_500;
+const MAX_INTERACTIVE_REST_BACKFILL_ROWS: u32 = 100_000;
 
 #[tauri::command]
 pub async fn health(state: State<'_, AppState>) -> AppResult<HealthStatus> {
@@ -87,9 +90,10 @@ pub async fn get_chart_data(
     state: State<'_, AppState>,
     request: KlineRequest,
 ) -> AppResult<ChartDataResponse> {
-    let cached = state.db.read_klines(&request).await?;
+    let read_request = chart_cache_read_request(&request);
+    let cached = state.db.read_klines(&read_request).await?;
 
-    if !cached.is_empty() {
+    if cache_satisfies_request(&cached, &read_request) {
         return Ok(ChartDataResponse {
             points: cached.iter().map(ChartPoint::from).collect(),
             source: "sqlite-cache".to_string(),
@@ -97,12 +101,12 @@ pub async fn get_chart_data(
         });
     }
 
-    let rows = state.binance.get_klines(&request).await?;
-    state.db.write_klines(&rows).await?;
+    backfill_chart_klines(state.inner(), &request).await?;
+    let rows = state.db.read_klines(&read_request).await?;
 
     Ok(ChartDataResponse {
         points: rows.iter().map(ChartPoint::from).collect(),
-        source: "binance-rest".to_string(),
+        source: "sqlite-cache+binance-rest".to_string(),
         cached: false,
     })
 }
@@ -112,6 +116,10 @@ pub async fn get_indicators(
     state: State<'_, AppState>,
     request: KlineRequest,
 ) -> AppResult<Vec<IndicatorValue>> {
+    if request.limit == Some(0) {
+        return Ok(Vec::new());
+    }
+
     let rows = state.db.read_klines(&request).await?;
     let points: Vec<ChartPoint> = rows.iter().map(ChartPoint::from).collect();
 
@@ -624,5 +632,283 @@ fn push_csv_field(content: &mut String, field: &str) {
         content.push('"');
     } else {
         content.push_str(field);
+    }
+}
+
+fn cache_satisfies_request(rows: &[crate::domain::Kline], request: &KlineRequest) -> bool {
+    if rows.is_empty() {
+        return false;
+    }
+
+    let Some(limit) = request.limit else {
+        return true;
+    };
+
+    rows.len() >= limit as usize
+}
+
+fn chart_cache_read_request(request: &KlineRequest) -> KlineRequest {
+    KlineRequest {
+        limit: request
+            .limit
+            .map(|limit| limit.min(MAX_INTERACTIVE_REST_BACKFILL_ROWS)),
+        ..request.clone()
+    }
+}
+
+async fn backfill_chart_klines(state: &AppState, request: &KlineRequest) -> AppResult<()> {
+    ensure_supported_interval(request)?;
+
+    if request.start_time.is_none() && request.end_time.is_none() {
+        return backfill_recent_chart_klines(state, request).await;
+    }
+
+    let pages = build_backfill_pages(request)?;
+    let mut fetched_rows = 0usize;
+
+    for page in pages {
+        let rows = state.binance.get_klines(&page).await?;
+
+        if rows.is_empty() {
+            break;
+        }
+
+        let row_count = rows.len();
+        state.db.write_klines(&rows).await?;
+        fetched_rows += row_count;
+
+        if row_count < page.limit.unwrap_or(BINANCE_KLINE_PAGE_LIMIT) as usize {
+            break;
+        }
+    }
+
+    tracing::info!(
+        market = request.market.as_str(),
+        symbol = request.symbol.to_uppercase(),
+        interval = request.interval,
+        fetched_rows,
+        "chart kline backfill completed"
+    );
+
+    Ok(())
+}
+
+async fn backfill_recent_chart_klines(state: &AppState, request: &KlineRequest) -> AppResult<()> {
+    let mut remaining = requested_backfill_limit(request);
+    let mut fetched_rows = 0usize;
+    let mut end_time = None;
+
+    while remaining > 0 {
+        let page_limit = remaining.min(BINANCE_KLINE_PAGE_LIMIT);
+        let page = recent_backfill_page(request, page_limit, end_time);
+        let rows = state.binance.get_klines(&page).await?;
+
+        if rows.is_empty() {
+            break;
+        }
+
+        let row_count = rows.len();
+        let first_open_time = rows.first().map(|row| row.open_time).unwrap_or_default();
+        state.db.write_klines(&rows).await?;
+        fetched_rows += row_count;
+
+        if row_count < page_limit as usize {
+            break;
+        }
+
+        remaining = remaining.saturating_sub(row_count as u32);
+
+        if remaining == 0 || first_open_time <= 0 {
+            break;
+        }
+
+        let next_end_time = Some(first_open_time.saturating_sub(1));
+
+        if next_end_time == end_time {
+            break;
+        }
+
+        end_time = next_end_time;
+    }
+
+    tracing::info!(
+        market = request.market.as_str(),
+        symbol = request.symbol.to_uppercase(),
+        interval = request.interval,
+        fetched_rows,
+        "chart recent kline backfill completed"
+    );
+
+    Ok(())
+}
+
+fn build_backfill_pages(request: &KlineRequest) -> AppResult<Vec<KlineRequest>> {
+    let interval = ensure_supported_interval(request)?;
+    let requested_limit = requested_backfill_limit(request);
+    let mut remaining = requested_limit;
+    let mut end_time = request
+        .end_time
+        .unwrap_or_else(|| align_to_current_interval_close(interval));
+    let mut pages = Vec::new();
+
+    while remaining > 0 {
+        let page_limit = remaining.min(BINANCE_KLINE_PAGE_LIMIT);
+        let page_span = interval.saturating_mul(i64::from(page_limit));
+        let mut start_time = end_time.saturating_sub(page_span).saturating_add(1);
+
+        if let Some(request_start_time) = request.start_time {
+            start_time = start_time.max(request_start_time);
+
+            if start_time > end_time {
+                break;
+            }
+        }
+
+        pages.push(KlineRequest {
+            limit: Some(page_limit),
+            start_time: Some(start_time),
+            end_time: Some(end_time),
+            ..request.clone()
+        });
+
+        if let Some(request_start_time) = request.start_time
+            && start_time <= request_start_time
+        {
+            break;
+        }
+
+        remaining -= page_limit;
+
+        if end_time <= interval {
+            break;
+        }
+
+        end_time = start_time.saturating_sub(1);
+    }
+
+    Ok(pages)
+}
+
+fn ensure_supported_interval(request: &KlineRequest) -> AppResult<i64> {
+    interval_ms(&request.interval).ok_or_else(|| {
+        AppError::Message(format!("unsupported K-line interval: {}", request.interval))
+    })
+}
+
+fn requested_backfill_limit(request: &KlineRequest) -> u32 {
+    request
+        .limit
+        .unwrap_or(BINANCE_KLINE_PAGE_LIMIT)
+        .min(MAX_INTERACTIVE_REST_BACKFILL_ROWS)
+}
+
+fn recent_backfill_page(
+    request: &KlineRequest,
+    page_limit: u32,
+    end_time: Option<i64>,
+) -> KlineRequest {
+    KlineRequest {
+        limit: Some(page_limit),
+        start_time: None,
+        end_time,
+        ..request.clone()
+    }
+}
+
+fn align_to_current_interval_close(interval: i64) -> i64 {
+    let open_time = now_ms() / interval * interval;
+
+    open_time.saturating_sub(1)
+}
+
+#[cfg(test)]
+mod chart_backfill_tests {
+    use super::*;
+    use crate::domain::Kline;
+
+    fn request(interval: &str, limit: u32) -> KlineRequest {
+        KlineRequest {
+            market: Market::UsdM,
+            symbol: "BTCUSDT".to_string(),
+            interval: interval.to_string(),
+            limit: Some(limit),
+            start_time: None,
+            end_time: Some(1_700_000_000_000),
+        }
+    }
+
+    fn recent_request(interval: &str, limit: u32) -> KlineRequest {
+        KlineRequest {
+            end_time: None,
+            ..request(interval, limit)
+        }
+    }
+
+    #[test]
+    fn creates_pages_for_large_interval_requests() {
+        let pages = build_backfill_pages(&request("1h", 4_000)).expect("pages");
+
+        assert_eq!(pages.len(), 3);
+        assert_eq!(pages[0].limit, Some(1_500));
+        assert_eq!(pages[1].limit, Some(1_500));
+        assert_eq!(pages[2].limit, Some(1_000));
+        assert_eq!(pages[0].interval, "1h");
+        assert!(pages[0].start_time.unwrap() < pages[0].end_time.unwrap());
+        assert!(pages[1].end_time.unwrap() < pages[0].start_time.unwrap());
+    }
+
+    #[test]
+    fn recent_backfill_first_page_uses_limit_only() {
+        let request = recent_request("1M", 1_000);
+        let first_page = recent_backfill_page(&request, 1_000, None);
+        let second_page = recent_backfill_page(&request, 500, Some(1_699_999_999_999));
+
+        assert_eq!(first_page.limit, Some(1_000));
+        assert_eq!(first_page.start_time, None);
+        assert_eq!(first_page.end_time, None);
+        assert_eq!(second_page.limit, Some(500));
+        assert_eq!(second_page.start_time, None);
+        assert_eq!(second_page.end_time, Some(1_699_999_999_999));
+    }
+
+    #[test]
+    fn caps_interactive_backfill_requests() {
+        let pages = build_backfill_pages(&request("4h", 500_000)).expect("pages");
+        let total_limit: u32 = pages.iter().map(|page| page.limit.unwrap_or(0)).sum();
+
+        assert_eq!(total_limit, MAX_INTERACTIVE_REST_BACKFILL_ROWS);
+    }
+
+    #[test]
+    fn rejects_unknown_intervals() {
+        let error = build_backfill_pages(&request("bad", 100)).expect_err("unsupported interval");
+
+        assert!(error.to_string().contains("unsupported K-line interval"));
+    }
+
+    #[test]
+    fn keeps_cache_hit_rules_limit_aware() {
+        let rows = vec![Kline {
+            market: "usdM".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            interval: "1h".to_string(),
+            open_time: 0,
+            close_time: 3_599_999,
+            open: "1".to_string(),
+            high: "1".to_string(),
+            low: "1".to_string(),
+            close: "1".to_string(),
+            volume: "1".to_string(),
+            quote_volume: "1".to_string(),
+            trade_count: 1,
+            taker_buy_base_volume: "0".to_string(),
+            taker_buy_quote_volume: "0".to_string(),
+            is_closed: true,
+            source: "test".to_string(),
+            updated_at: 1,
+        }];
+
+        assert!(!cache_satisfies_request(&rows, &request("1h", 2)));
+        assert!(cache_satisfies_request(&rows, &request("1h", 1)));
     }
 }

@@ -33,17 +33,31 @@ npm run verify:large-chart:100k
 npm run verify:large-chart:1m
 ```
 
+Current Tauri/Rust slice includes:
+
+1. Tauri 2 desktop shell with a Rust/Tokio/SQLx/SQLite backend and Solid frontend.
+2. Binance Spot and USD-M public market data through Rust REST/WebSocket clients.
+3. SQLite-backed K-line cache, settings, watchlist, drawings and config import/export.
+4. Dual Lightweight Charts panes with linked crosshair/range, PNG export and CSV export.
+5. Built-in indicator calculation and display for Volume, MA, EMA, BOLL, MACD, RSI, ATR, KDJ and Supertrend.
+6. Persisted drawing creation/loading/deletion for horizontal line, trend line, vertical line, rectangle, text and measurement annotations.
+7. Cache summary, current-symbol clear and per cached market/symbol/interval clear actions.
+8. Chinese/English UI, dark/light theme and session restore.
+
 Latest local performance evidence on this branch:
 
-1. 100,000 real Binance Public Data `BTCUSDT` USD-M `1m` rows: full dual-chart interaction, indicators, horizontal-line drawing, PNG export and CSV export passed.
-2. 1,000,000 real Binance Public Data `BTCUSDT` USD-M `1m` rows: dual-chart basic browsing passed with LOD/downsampling to 142,858 rendered candles per pane.
+1. 100,000 real Binance Public Data `BTCUSDT` USD-M `1m` rows: full dual-chart interaction, full indicator handoff, drawing workflow, PNG export and CSV export passed.
+2. 1,000,000 real Binance Public Data `BTCUSDT` USD-M `1m` rows: dual-chart basic browsing passed with LOD/downsampling to 142,858 rendered candles per pane; 1M overlay indicators remain a non-blocking best-effort area.
 3. `npm run tauri:build` builds the release binary at `src-tauri/target/release/klineforge`.
+4. Live Binance market smoke can be blocked by external regional/network responses such as HTTP 451; use the Public Data archive verification path for local release evidence when direct Binance REST/WebSocket access is unavailable.
 
 The old React/Electron implementation has been moved to `legacy-src/` as a migration reference. Old IndexedDB/localStorage data is not migrated into the new SQLite store on this branch.
 
 ## Legacy Main-Branch Notes
 
 The following sections describe the previous React/Electron/Web MVP preserved under `legacy-src/`. They remain useful as migration reference only and are not the active architecture on `perf/tauri-rust-rewrite`.
+
+For current work on this branch, prefer the Tauri/Rust docs linked above and the npm scripts listed in the Tauri/Rust section. The legacy notes below intentionally mention React, Electron, Dexie/IndexedDB, KLineCharts and Docker because they describe the old `main` architecture.
 
 KLineForge is a desktop-first, pure frontend crypto charting application for Binance Spot and Binance USD-M Futures public market data. The MVP focuses on local charting, drawing, built-in indicators, multi-timeframe review and local K-line caching. It does not place orders, manage API keys or connect to a user account.
 
@@ -129,17 +143,18 @@ MVP 不包含：
 
 ## Tech Stack
 
-1. React + TypeScript + Vite.
-2. KLineCharts for high-performance Canvas chart rendering.
-3. Zustand for app/session/settings state.
-4. Dexie over IndexedDB for K-lines, ranges, cache tasks, drawings, watchlists, indicators and settings.
-5. i18next and react-i18next for bilingual UI.
-6. fetch and WebSocket for Binance public market data.
-7. fflate for Binance Public Data ZIP archive parsing.
-8. Vitest and Testing Library for unit/component tests.
-9. Playwright scripts for browser-level verification.
-10. Electron desktop shell for standalone local app startup.
-11. Docker multi-stage build with Nginx static serving.
+Current `v0.1.0-tauri` branch:
+
+1. Tauri 2 desktop shell.
+2. Rust + Tokio backend.
+3. SQLx over SQLite for K-lines, settings, watchlists, drawings and cache metadata.
+4. Solid + TypeScript + Vite frontend.
+5. Lightweight Charts for high-performance chart rendering.
+6. Rust `reqwest` and `tokio-tungstenite` for Binance public REST/WebSocket data.
+7. Rust ZIP/Public Data archive tooling for benchmark datasets.
+8. Vitest, Rust tests and Playwright scripts for verification.
+
+Legacy `main` reference under `legacy-src/`: React, KLineCharts, Zustand, Dexie/IndexedDB, Electron and Docker/Nginx.
 
 ## Local Development
 
@@ -152,22 +167,22 @@ npm install
 Run the development server:
 
 ```bash
-npm run dev -- --host 127.0.0.1
+npm run dev
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:5173/
+http://127.0.0.1:1420/
 ```
 
-Run as a standalone desktop app during development:
+Run as a standalone Tauri desktop app during development:
 
 ```bash
-npm run desktop:dev
+npm run tauri:dev
 ```
 
-This starts the Vite development server and opens KLineForge in an Electron window.
+This starts the Vite development server and opens KLineForge in a Tauri window.
 
 Development checks:
 
@@ -181,25 +196,27 @@ npm run build
 Browser verification scripts require Chromium and a running dev server. Example:
 
 ```bash
-node scripts/verify-milestone-12.mjs http://127.0.0.1:5173/
+npm run build
+npm run preview -- --port 4173
+npm run verify:render -- http://127.0.0.1:4173/
 ```
 
 本地开发：
 
 ```bash
 npm install
-npm run dev -- --host 127.0.0.1
+npm run dev
 ```
 
-然后打开 `http://127.0.0.1:5173/`。开发验收命令为 `npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`。浏览器验收脚本需要先启动开发服务器。
+然后打开 `http://127.0.0.1:1420/`。开发验收命令为 `npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`。浏览器验收脚本需要先构建并启动 preview 服务。
 
-如需用独立桌面窗口启动开发版：
+如需用独立 Tauri 桌面窗口启动开发版：
 
 ```bash
-npm run desktop:dev
+npm run tauri:dev
 ```
 
-该命令会启动 Vite 开发服务器，并用 Electron 窗口打开 KLineForge。
+该命令会启动 Vite 开发服务器，并用 Tauri 窗口打开 KLineForge。
 
 ## Production Build
 
@@ -211,67 +228,48 @@ npm run build
 
 The production output is written to `dist/`.
 
-The production build code-splits non-initial panels and vendor libraries. The latest verified build split the initial app code into a small entry chunk plus separate React, KLineCharts and storage chunks, with lazy chunks for symbol search, cache management, indicators and export/import.
+The production build code-splits vendor libraries into separate Solid, Tauri bridge and charting chunks.
 
 生产构建输出位于 `dist/`。
 
-生产构建会拆分非初始面板和 vendor 库。最新验收构建把初始应用代码拆成较小入口 chunk，并把 React、KLineCharts 和存储依赖拆成独立 chunk；交易对搜索、缓存管理、指标和导入导出为懒加载 chunk。
+生产构建会拆分 vendor 库，生成独立的 Solid、Tauri bridge 和 charting chunk。
 
 ## Desktop Build
 
-Compile the Electron main/preload process and the Vite renderer:
+Build the Tauri release binary:
 
 ```bash
-npm run desktop:build
+npm run tauri:build
 ```
 
-Create an unpacked desktop build for local verification:
+Create the configured Linux bundle when the host bundling toolchain supports it:
 
 ```bash
-npm run desktop:pack
+npm run tauri:bundle
 ```
 
-Create a distributable desktop package:
+`npm run tauri:build` uses `tauri build --no-bundle` and writes the local release binary to:
 
-```bash
-npm run desktop:dist
+```text
+src-tauri/target/release/klineforge
 ```
 
-On Linux, the default distributable target is an AppImage written under `release/`. The desktop shell keeps the React renderer isolated from Node.js by using Electron `contextIsolation`, disabled `nodeIntegration` and a small preload bridge.
+On the current Arch-based development machine, full AppImage bundling can fail inside `linuxdeploy` because its bundled `strip` may not understand newer system libraries with `.relr.dyn` sections. Use Ubuntu/CI for AppImage artifacts if that occurs.
 
 桌面版构建：
 
 ```bash
-npm run desktop:build
-npm run desktop:pack
-npm run desktop:dist
+npm run tauri:build
+npm run tauri:bundle
 ```
 
-Linux 默认产物为 `release/` 目录下的 AppImage。桌面外壳保持 React 渲染层与 Node.js 隔离，使用 Electron `contextIsolation`、关闭 `nodeIntegration`，并通过很小的 preload bridge 暴露桌面只读信息。
+`npm run tauri:build` 使用 `tauri build --no-bundle`，本地 release binary 输出到 `src-tauri/target/release/klineforge`。当前 Arch 开发机上的完整 AppImage bundling 可能受 `linuxdeploy`/`.relr.dyn` 工具链限制影响；如遇到该问题，用 Ubuntu/CI 产出 AppImage。
 
-## Docker
+## Web/Docker
 
-Build:
+Web/Docker static deployment is not a release target for `v0.1.0-tauri`. The old Docker/Nginx files remain only as legacy reference.
 
-```bash
-docker build -t klineforge .
-```
-
-Run:
-
-```bash
-docker run --rm -p 8080:80 klineforge
-```
-
-Open:
-
-```text
-http://127.0.0.1:8080/
-```
-
-Docker image uses a Node build stage and an Nginx runtime stage. It serves the static Vite build, falls back to `index.html` for client-side routing, sends basic security headers, keeps `index.html` uncached and serves hashed assets with immutable long-lived cache headers.
-
-Docker 镜像使用 Node 构建阶段和 Nginx 运行阶段，部署 Vite 静态构建，并通过 `index.html` 处理前端路由回退；同时发送基础安全响应头，对 `index.html` 禁用缓存，对带 hash 的静态资源使用长期 immutable 缓存。
+`v0.1.0-tauri` 不以 Web/Docker 静态部署作为发布目标；旧 Docker/Nginx 文件仅作为 legacy 参考保留。
 
 ## Data And Persistence
 
@@ -279,54 +277,48 @@ KLineForge uses public Binance data only. It does not ask for API keys and does 
 
 Local persistence:
 
-1. `localStorage`: small launch/session preferences.
-2. IndexedDB database `klineforge`: K-lines, cache ranges, cache tasks, watchlists, drawings, indicator configs and settings.
+1. SQLite database `klineforge.sqlite3` under the Tauri app data directory.
+2. Preview/browser mode keeps small in-memory state for verification, but the release desktop app uses SQLite.
 
-The Electron desktop build uses Chromium storage inside Electron's app profile. Browser-mode and desktop-mode IndexedDB data are separate; use the existing config export/import flow to move settings, watchlists, drawings and indicator configuration between profiles.
+Old IndexedDB/localStorage data from the React/Electron/Web architecture is not migrated into this prerelease. Use the old `main` build if those local profiles are still needed.
 
-Market data reads use a clear fallback order. Symbol search, leaderboards, watchlist ticker rows and market info try real Binance REST data first, then optional configured proxy endpoints, and only use static fallback rows when real data access fails. Chart history tries local cache, direct REST/proxy and Binance Public Data where supported; after cache or Public Data loads, the chart loader checks the last candle close boundary and tries REST/proxy backfill so monthly archives do not silently leave recent gaps. If real chart sources all fail, generated fallback candles are labeled as fallback data. WebSocket remains the live continuation.
-
-Optional proxy variables are `VITE_KLINEFORGE_PROXY_URL`, `VITE_KLINEFORGE_SPOT_PROXY_URL` and `VITE_KLINEFORGE_USDM_PROXY_URL`. KLineForge expects Binance-compatible REST paths and does not implement the backend service in this MVP.
+Market data reads use Rust-side Binance public REST and WebSocket clients. Large benchmark/verification datasets use Binance Public Data monthly archives. If direct Binance REST/WebSocket is blocked by network or regional policy, commands can fail with external errors such as HTTP 451; the Public Data archive verification path remains the preferred local release evidence in that case.
 
 Binance REST endpoints can be unavailable in some browser environments because of regional access or CORS restrictions. Binance Public Data monthly ZIP archives can also lag because they only cover completed months, and some archive intervals are not available. Unsupported archive intervals and failed imports are surfaced in cache tasks instead of being treated as complete coverage.
 
-Cache coverage ranges use accurate candle close boundaries, not just the last candle `openTime`. Cache tasks can be `partial` when their declared target range still has missing spans. Config import validates the export envelope and record shapes before mutating IndexedDB, so malformed JSON cannot clear existing settings, watchlists, drawings or indicator configs.
+Chart history first reads SQLite. A cache hit must contain enough rows for the requested limit; otherwise the Rust backend refetches and writes the larger window so a small old cache cannot block large-chart verification. Config import/export uses the new SQLite-era schema for settings, watchlist and drawings.
 
 KLineForge 只使用 Binance 公开数据，不需要 API Key，也不会把用户配置发送到服务器。
 
 本地保存：
 
-1. `localStorage` 保存少量启动和会话偏好。
-2. IndexedDB 数据库 `klineforge` 保存 K 线、缓存范围、缓存任务、自选、画线、指标配置和设置。
+1. Tauri app data 目录下的 SQLite 数据库 `klineforge.sqlite3`。
+2. Preview/browser 模式只为验证保留少量内存状态；发布桌面版使用 SQLite。
 
-Electron 桌面版使用 Electron 应用 profile 下的 Chromium 存储。浏览器模式和桌面模式的 IndexedDB 数据彼此独立；如需迁移设置、自选、画线和指标配置，请使用现有配置导出/导入流程。
+React/Electron/Web 旧架构里的 IndexedDB/localStorage 数据不会迁移到该预发布版本；仍需这些本地 profile 时请继续使用旧 `main` 构建。
 
-行情读取使用明确的兜底顺序。交易对搜索、榜单、自选 ticker 行和市场信息会先尝试真实 Binance REST，再尝试可选代理端点，只有真实数据访问失败后才使用静态兜底行。图表历史会尝试本地缓存、直接 REST/代理和支持的 Binance Public Data；读取缓存或 Public Data 后会检查最后一根蜡烛收盘边界，并尝试 REST/代理回补最近缺口，避免月度归档造成静默过期。如果真实图表来源全部失败，生成的兜底蜡烛会标记为兜底数据。WebSocket 仍用于实时延续。
+行情读取使用 Rust 侧 Binance 公共 REST 和 WebSocket client。大数据 benchmark/验证数据集使用 Binance Public Data 月度归档。若直接 Binance REST/WebSocket 被网络或地区策略阻断，命令可能出现 HTTP 451 等外部错误；此时以 Public Data 归档验证路径作为本地发布证据。
 
-可选代理变量为 `VITE_KLINEFORGE_PROXY_URL`、`VITE_KLINEFORGE_SPOT_PROXY_URL` 和 `VITE_KLINEFORGE_USDM_PROXY_URL`。KLineForge 期望代理提供 Binance 兼容 REST 路径，MVP 不实现后端服务。
-
-部分浏览器环境可能因区域访问或 CORS 限制无法直接访问 Binance REST。Binance Public Data 月度 ZIP 归档只覆盖已完成月份，也可能不支持部分周期。不支持的归档周期和失败导入会在缓存任务中显示，而不会被当成完整覆盖。
-
-缓存覆盖范围使用准确的蜡烛收盘边界，而不是仅使用最后一根 K 线的 `openTime`。如果声明的目标范围仍有缺失，缓存任务会显示为 `partial`。配置导入会在修改 IndexedDB 前校验导出 envelope 和记录形状，因此格式错误的 JSON 不能清空已有设置、自选、画线或指标配置。
+图表历史优先读取 SQLite。缓存命中必须满足请求行数，否则 Rust 后端会重新拉取并写入更大的窗口，避免小缓存阻塞大图验证。配置导入/导出使用新的 SQLite 时代 schema，覆盖设置、自选和画线。
 
 ## Documentation
 
 More details:
 
 1. [Development Guide](./docs/development.md)
-2. [Architecture](./docs/architecture.md)
+2. [Tauri/Rust Architecture](./docs/tauri-rust-architecture.md)
 3. [Cache Design](./docs/cache.md)
-4. [Goal Specification](./KLINEFORGE_GOAL.md)
+4. [Tauri Release Plan](./docs/tauri-release-plan.md)
 
 更多说明：
 
 1. [开发文档](./docs/development.md)
-2. [架构文档](./docs/architecture.md)
+2. [Tauri/Rust 架构文档](./docs/tauri-rust-architecture.md)
 3. [缓存文档](./docs/cache.md)
-4. [目标规格](./KLINEFORGE_GOAL.md)
+4. [Tauri 发布计划](./docs/tauri-release-plan.md)
 
 ## Contributing Notes
 
-Keep MVP scope tight. UI components should not call Binance endpoints directly; use provider/adapter abstractions. Persisted schemas must keep `schemaVersion`. Drawing anchors must remain `{ timestamp, price }`, never screen coordinates. Background cache work must not block active chart interaction.
+Keep MVP scope tight. Frontend components should call Tauri commands instead of Binance endpoints directly. Persisted schemas must stay explicit and versionable. Drawing anchors must remain time/price based, never screen coordinates. Background cache and benchmark work must not block active chart interaction.
 
-贡献时请保持 MVP 范围收敛。UI 组件不要直接调用 Binance 接口，应通过 provider/adapter 抽象访问。持久化结构需要保留 `schemaVersion`。画线锚点必须保持 `{ timestamp, price }`，不能用屏幕坐标。后台缓存不能阻塞当前图表交互。
+贡献时请保持 MVP 范围收敛。前端组件不要直接调用 Binance 接口，应通过 Tauri command 访问后端。持久化结构需要保持明确且可版本化。画线锚点必须基于时间/价格，不能用屏幕坐标。后台缓存和 benchmark 不能阻塞当前图表交互。

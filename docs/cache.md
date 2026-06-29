@@ -2,6 +2,8 @@
 
 ## English
 
+This document keeps the original MVP cache design for reference. On the active `v0.1.0-tauri` branch, local K-line storage is implemented in SQLite through the Rust backend. The current Tauri UI exposes cache summary, clear-current-symbol and per cached market/symbol/interval clear actions; the full range-completeness/task queue UI remains future work.
+
 KLineForge stores local multi-interval K-line history in IndexedDB. The MVP does not store Tick, raw trade or aggTrade data.
 
 ### Goals
@@ -151,6 +153,8 @@ CSV export reads from local cache first. It exports the selected market/symbol/i
 Tick download/storage is intentionally outside the MVP. If added later, it should use separate stores, separate quota warnings and a separate background download option so K-line caching remains predictable.
 
 ## 中文
+
+本文保留原 MVP 缓存设计作为参考。在当前 `v0.1.0-tauri` 分支中，本地 K 线存储由 Rust 后端通过 SQLite 实现。当前 Tauri UI 已提供缓存汇总、清理当前交易对和按已缓存 market/symbol/interval 清理的操作；完整范围完整度和任务队列 UI 仍属于后续工作。
 
 KLineForge 使用 IndexedDB 保存本地多周期 K 线历史。MVP 不保存 Tick、raw trade 或 aggTrade 数据。
 
