@@ -45,10 +45,11 @@ impl Market {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, sqlx::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, sqlx::Type, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "TEXT")]
 pub enum ChartId {
+    #[default]
     Left,
     Right,
 }
@@ -240,7 +241,20 @@ pub struct AppSettings {
     pub right_interval: String,
     pub theme: String,
     pub language: String,
-    pub indicators: IndicatorSettings,
+    #[serde(default = "default_chart_limit")]
+    pub chart_limit: u32,
+    #[serde(default)]
+    pub indicator_config_chart: ChartId,
+    #[serde(default = "default_drawing_type")]
+    pub drawing_type: String,
+}
+
+fn default_chart_limit() -> u32 {
+    1_000
+}
+
+fn default_drawing_type() -> String {
+    "horizontal-line".to_string()
 }
 
 impl Default for AppSettings {
@@ -252,52 +266,54 @@ impl Default for AppSettings {
             right_interval: "1h".to_string(),
             theme: "dark".to_string(),
             language: "zh".to_string(),
-            indicators: IndicatorSettings::default(),
+            chart_limit: default_chart_limit(),
+            indicator_config_chart: ChartId::Left,
+            drawing_type: default_drawing_type(),
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IndicatorSettings {
-    #[serde(default = "default_true")]
-    pub volume: bool,
-    #[serde(default = "default_true")]
-    pub ma: bool,
-    #[serde(default = "default_true")]
-    pub ema: bool,
-    #[serde(default = "default_true")]
-    pub boll: bool,
-    #[serde(default = "default_true")]
-    pub macd: bool,
-    #[serde(default = "default_true")]
-    pub rsi: bool,
-    #[serde(default = "default_true")]
-    pub atr: bool,
-    #[serde(default = "default_true")]
-    pub kdj: bool,
-    #[serde(default = "default_true")]
-    pub supertrend: bool,
-}
-
-impl Default for IndicatorSettings {
-    fn default() -> Self {
-        Self {
-            volume: true,
-            ma: true,
-            ema: true,
-            boll: true,
-            macd: true,
-            rsi: true,
-            atr: true,
-            kdj: true,
-            supertrend: true,
+impl AppSettings {
+    pub fn validated(mut self) -> AppResult<Self> {
+        if self.symbol.trim().is_empty() {
+            return Err(AppError::Message("symbol setting is required".to_string()));
         }
-    }
-}
 
-fn default_true() -> bool {
-    true
+        validate_supported_interval(&self.left_interval, "leftInterval")?;
+        validate_supported_interval(&self.right_interval, "rightInterval")?;
+
+        if !matches!(self.theme.as_str(), "dark" | "light") {
+            return Err(AppError::Message(format!(
+                "unsupported theme setting: {}",
+                self.theme
+            )));
+        }
+
+        if !matches!(self.language.as_str(), "zh" | "en") {
+            return Err(AppError::Message(format!(
+                "unsupported language setting: {}",
+                self.language
+            )));
+        }
+
+        if !matches!(self.chart_limit, 1_000 | 100_000 | 1_000_000) {
+            return Err(AppError::Message(format!(
+                "unsupported chartLimit setting: {}",
+                self.chart_limit
+            )));
+        }
+
+        if !supported_drawing_type(&self.drawing_type) {
+            return Err(AppError::Message(format!(
+                "unsupported drawingType setting: {}",
+                self.drawing_type
+            )));
+        }
+
+        self.symbol = self.symbol.to_uppercase();
+
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -652,62 +668,39 @@ pub struct IndicatorResponse {
 pub const MAX_INDICATOR_INSTANCES_PER_SCOPE: usize = 20;
 pub const MAX_INDICATOR_CALCULATION_ROWS: u32 = 200_000;
 
-pub fn default_indicator_instances(
-    chart_id: ChartId,
-    interval: &str,
-    settings: &IndicatorSettings,
-) -> Vec<IndicatorInstance> {
+pub fn default_indicator_instances(chart_id: ChartId, interval: &str) -> Vec<IndicatorInstance> {
     let defaults = [
-        (settings.volume, IndicatorParams::Volume),
-        (
-            settings.ma,
-            IndicatorParams::Ma {
-                periods: vec![5, 10, 30],
-            },
-        ),
-        (
-            settings.ema,
-            IndicatorParams::Ema {
-                periods: vec![12, 26],
-            },
-        ),
-        (
-            settings.boll,
-            IndicatorParams::Boll {
-                period: 20,
-                multiplier: 2.0,
-            },
-        ),
-        (
-            settings.macd,
-            IndicatorParams::Macd {
-                short_period: 12,
-                long_period: 26,
-                signal_period: 9,
-            },
-        ),
-        (settings.rsi, IndicatorParams::Rsi { period: 14 }),
-        (settings.atr, IndicatorParams::Atr { period: 14 }),
-        (
-            settings.kdj,
-            IndicatorParams::Kdj {
-                period: 9,
-                k_smoothing: 3,
-                d_smoothing: 3,
-            },
-        ),
-        (
-            settings.supertrend,
-            IndicatorParams::Supertrend {
-                period: 10,
-                multiplier: 3.0,
-            },
-        ),
+        IndicatorParams::Volume,
+        IndicatorParams::Ma {
+            periods: vec![5, 10, 30],
+        },
+        IndicatorParams::Ema {
+            periods: vec![12, 26],
+        },
+        IndicatorParams::Boll {
+            period: 20,
+            multiplier: 2.0,
+        },
+        IndicatorParams::Macd {
+            short_period: 12,
+            long_period: 26,
+            signal_period: 9,
+        },
+        IndicatorParams::Rsi { period: 14 },
+        IndicatorParams::Atr { period: 14 },
+        IndicatorParams::Kdj {
+            period: 9,
+            k_smoothing: 3,
+            d_smoothing: 3,
+        },
+        IndicatorParams::Supertrend {
+            period: 10,
+            multiplier: 3.0,
+        },
     ];
 
     defaults
         .into_iter()
-        .filter_map(|(enabled, params)| enabled.then_some(params))
         .enumerate()
         .map(|(position, params)| {
             let styles = default_styles_for_params(&params);
@@ -851,6 +844,23 @@ fn is_hex_color(value: &str) -> bool {
     (hex.len() == 6 || hex.len() == 8) && hex.chars().all(|character| character.is_ascii_hexdigit())
 }
 
+fn validate_supported_interval(interval: &str, name: &str) -> AppResult<()> {
+    if interval_ms(interval).is_some() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "unsupported {name} setting: {interval}"
+        )))
+    }
+}
+
+fn supported_drawing_type(value: &str) -> bool {
+    matches!(
+        value,
+        "horizontal-line" | "trend-line" | "vertical-line" | "rectangle" | "text" | "measurement"
+    )
+}
+
 fn default_palette(kind: IndicatorKind) -> &'static [&'static str] {
     match kind {
         IndicatorKind::Volume => &["#4b78ff66"],
@@ -889,6 +899,73 @@ pub struct CacheClearRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CacheClearResult {
     pub deleted_rows: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheTask {
+    pub id: String,
+    pub market: Market,
+    pub symbol: String,
+    pub interval: String,
+    pub status: String,
+    pub progress: f64,
+    pub phase: String,
+    pub message: Option<String>,
+    pub rows_written: i64,
+    pub source: Option<String>,
+    pub first_open_time: Option<i64>,
+    pub last_open_time: Option<i64>,
+    pub archive_months: i64,
+    pub rest_pages: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheTaskPayload {
+    #[serde(default = "default_cache_task_kind")]
+    pub kind: String,
+    #[serde(default = "default_cache_task_phase")]
+    pub phase: String,
+    pub message: Option<String>,
+    #[serde(default)]
+    pub rows_written: i64,
+    pub source: Option<String>,
+    pub first_open_time: Option<i64>,
+    pub last_open_time: Option<i64>,
+    #[serde(default)]
+    pub archive_months: i64,
+    #[serde(default)]
+    pub rest_pages: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+}
+
+impl Default for CacheTaskPayload {
+    fn default() -> Self {
+        Self {
+            kind: default_cache_task_kind(),
+            phase: default_cache_task_phase(),
+            message: None,
+            rows_written: 0,
+            source: None,
+            first_open_time: None,
+            last_open_time: None,
+            archive_months: 0,
+            rest_pages: 0,
+            started_at: None,
+            finished_at: None,
+        }
+    }
+}
+
+fn default_cache_task_kind() -> String {
+    "full-history".to_string()
+}
+
+fn default_cache_task_phase() -> String {
+    "queued".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -984,8 +1061,8 @@ pub fn interval_ms(interval: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChartId, IndicatorKind, IndicatorLineStyle, IndicatorParams, IndicatorStyle, Market,
-        default_indicator_instances, interval_ms,
+        AppSettings, ChartId, IndicatorKind, IndicatorLineStyle, IndicatorParams, IndicatorStyle,
+        Market, default_indicator_instances, interval_ms,
     };
     use std::collections::BTreeMap;
 
@@ -1007,6 +1084,65 @@ mod tests {
         assert_eq!(interval_ms("2h"), Some(2 * 60 * 60_000));
         assert_eq!(interval_ms("1W"), Some(7 * 24 * 60 * 60_000));
         assert_eq!(interval_ms("1M"), Some(30 * 24 * 60 * 60_000));
+    }
+
+    #[test]
+    fn app_settings_validate_required_ui_preferences() {
+        let settings = AppSettings {
+            chart_limit: 100_000,
+            indicator_config_chart: ChartId::Right,
+            drawing_type: "measurement".to_string(),
+            ..AppSettings::default()
+        }
+        .validated()
+        .expect("settings");
+
+        assert_eq!(settings.symbol, "BTCUSDT");
+        assert_eq!(settings.chart_limit, 100_000);
+        assert_eq!(settings.indicator_config_chart, ChartId::Right);
+        assert_eq!(settings.drawing_type, "measurement");
+    }
+
+    #[test]
+    fn app_settings_reject_invalid_ui_preferences() {
+        assert!(
+            AppSettings {
+                chart_limit: 42,
+                ..AppSettings::default()
+            }
+            .validated()
+            .is_err()
+        );
+        assert!(
+            AppSettings {
+                drawing_type: "freehand".to_string(),
+                ..AppSettings::default()
+            }
+            .validated()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn app_settings_fills_ui_preference_defaults_from_stored_json() {
+        let stored_json = serde_json::json!({
+            "market": "usdM",
+            "symbol": "btcusdt",
+            "leftInterval": "5m",
+            "rightInterval": "1h",
+            "theme": "dark",
+            "language": "zh"
+        });
+
+        let settings = serde_json::from_value::<AppSettings>(stored_json)
+            .expect("settings decode")
+            .validated()
+            .expect("settings validate");
+
+        assert_eq!(settings.symbol, "BTCUSDT");
+        assert_eq!(settings.chart_limit, 1_000);
+        assert_eq!(settings.indicator_config_chart, ChartId::Left);
+        assert_eq!(settings.drawing_type, "horizontal-line");
     }
 
     #[test]
@@ -1090,26 +1226,25 @@ mod tests {
     }
 
     #[test]
-    fn default_instances_follow_old_boolean_settings() {
-        let settings = super::IndicatorSettings {
-            volume: false,
-            ma: true,
-            ema: false,
-            boll: false,
-            macd: false,
-            rsi: false,
-            atr: false,
-            kdj: false,
-            supertrend: true,
-        };
-        let defaults = default_indicator_instances(ChartId::Left, "1h", &settings);
+    fn default_instances_include_the_current_indicator_set() {
+        let defaults = default_indicator_instances(ChartId::Left, "1h");
 
         assert_eq!(
             defaults
                 .iter()
                 .map(|instance| instance.kind)
                 .collect::<Vec<_>>(),
-            vec![IndicatorKind::Ma, IndicatorKind::Supertrend]
+            vec![
+                IndicatorKind::Volume,
+                IndicatorKind::Ma,
+                IndicatorKind::Ema,
+                IndicatorKind::Boll,
+                IndicatorKind::Macd,
+                IndicatorKind::Rsi,
+                IndicatorKind::Atr,
+                IndicatorKind::Kdj,
+                IndicatorKind::Supertrend
+            ]
         );
     }
 }

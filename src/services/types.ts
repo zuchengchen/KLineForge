@@ -8,19 +8,9 @@ export interface AppSettings {
   rightInterval: string;
   theme: 'dark' | 'light' | string;
   language: 'zh' | 'en' | string;
-  indicators?: IndicatorSettings;
-}
-
-export interface IndicatorSettings {
-  volume: boolean;
-  ma: boolean;
-  ema: boolean;
-  boll: boolean;
-  macd: boolean;
-  rsi: boolean;
-  atr: boolean;
-  kdj: boolean;
-  supertrend: boolean;
+  chartLimit: number;
+  indicatorConfigChart: ChartId;
+  drawingType: string;
 }
 
 export interface HealthStatus {
@@ -202,6 +192,30 @@ export interface CacheClearRequest {
 
 export interface CacheClearResult {
   deletedRows: number;
+}
+
+export interface CacheTask {
+  id: string;
+  market: Market;
+  symbol: string;
+  interval: string;
+  status: 'queued' | 'running' | 'complete' | 'failed' | 'cancelled' | string;
+  progress: number;
+  phase: string;
+  message?: string;
+  rowsWritten: number;
+  source?: string;
+  firstOpenTime?: number;
+  lastOpenTime?: number;
+  archiveMonths: number;
+  restPages: number;
+  updatedAt: number;
+}
+
+export interface FullHistoryEnqueueRequest {
+  market: Market;
+  symbol: string;
+  intervals: string[];
 }
 
 export interface CsvExport {

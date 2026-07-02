@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LineStyle, type LogicalRange } from 'lightweight-charts';
-import { areLogicalRangesEqual, shouldAutoFitChartData, toLightweightLineStyle } from './ChartPane';
+import { LineStyle } from 'lightweight-charts';
+import { shouldAutoFitChartData, shouldFitChartAfterResize, toLightweightLineStyle } from './ChartPane';
 
 describe('ChartPane viewport helpers', () => {
   it('auto-fits the initial non-empty dataset', () => {
@@ -47,9 +47,9 @@ describe('ChartPane viewport helpers', () => {
     ).toBe(false);
   });
 
-  it('compares logical ranges with a small tolerance', () => {
-    expect(areLogicalRangesEqual(logicalRange(1, 100), logicalRange(1.00001, 99.99999))).toBe(true);
-    expect(areLogicalRangesEqual(logicalRange(1, 100), logicalRange(1.1, 100))).toBe(false);
+  it('re-fits chart content after resizing when candles are available', () => {
+    expect(shouldFitChartAfterResize({ renderedRows: 1000 })).toBe(true);
+    expect(shouldFitChartAfterResize({ renderedRows: 0 })).toBe(false);
   });
 
   it('maps configurable indicator line styles to Lightweight Charts styles', () => {
@@ -60,7 +60,3 @@ describe('ChartPane viewport helpers', () => {
     expect(toLightweightLineStyle('sparse-dotted')).toBe(LineStyle.SparseDotted);
   });
 });
-
-function logicalRange(from: number, to: number): LogicalRange {
-  return { from, to } as LogicalRange;
-}

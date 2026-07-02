@@ -12,6 +12,7 @@ import type {
   CsvExport,
   DrawingObject,
   DrawingQuery,
+  FullHistoryEnqueueRequest,
   LiveKlineEvent,
   LiveStreamRequest,
   HealthStatus,
@@ -24,11 +25,11 @@ import type {
   IndicatorScope,
   IndicatorSeries,
   IndicatorStyle,
-  IndicatorValue,
   KlineRequest,
   Leaderboards,
   Market,
   MarketInfoSnapshot,
+  CacheTask,
   SymbolSummary,
   WatchlistMutation,
   WatchlistReorderRequest,
@@ -50,6 +51,8 @@ export async function getHealth(): Promise<HealthStatus> {
 
 export async function getSettings(): Promise<AppSettings> {
   if (!isTauriRuntime) {
+    previewSettings = normalizeStoredAppSettings(previewSettings);
+
     return previewSettings;
   }
 
@@ -57,16 +60,15 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
+  const normalized = validateAppSettings(settings);
+
   if (!isTauriRuntime) {
-    previewSettings = {
-      ...settings,
-      indicators: normalizePreviewIndicatorSettings(settings.indicators),
-    };
+    previewSettings = { ...normalized };
 
     return previewSettings;
   }
 
-  return invoke<AppSettings>('save_settings', { settings });
+  return invoke<AppSettings>('save_settings', { settings: normalized });
 }
 
 export async function getWatchlist(market: Market): Promise<string[]> {
@@ -248,6 +250,73 @@ export async function getCacheSummary(): Promise<CacheSummary[]> {
   return invoke<CacheSummary[]>('get_cache_summary');
 }
 
+export async function getCacheTasks(): Promise<CacheTask[]> {
+  if (!isTauriRuntime) {
+    return previewCacheTasks;
+  }
+
+  return invoke<CacheTask[]>('get_cache_tasks');
+}
+
+export async function enqueueFullHistoryTasks(request: FullHistoryEnqueueRequest): Promise<CacheTask[]> {
+  if (!isTauriRuntime) {
+    const now = Date.now();
+    const tasks = request.intervals.map((interval) => ({
+      id: `preview-full-history:${request.market}:${request.symbol.toUpperCase()}:${interval}`,
+      market: request.market,
+      symbol: request.symbol.toUpperCase(),
+      interval,
+      status: 'cancelled',
+      progress: 0,
+      phase: 'preview-unavailable',
+      message: 'Full-history downloads are available in the Tauri desktop runtime.',
+      rowsWritten: 0,
+      archiveMonths: 0,
+      restPages: 0,
+      updatedAt: now,
+    }) satisfies CacheTask);
+    previewCacheTasks = tasks;
+
+    return tasks;
+  }
+
+  return invoke<CacheTask[]>('enqueue_full_history_tasks', { request });
+}
+
+export async function cancelCacheTask(id: string): Promise<CacheTask | null> {
+  if (!isTauriRuntime) {
+    const task = previewCacheTasks.find((candidate) => candidate.id === id);
+
+    if (task) {
+      task.status = 'cancelled';
+      task.phase = 'preview-unavailable';
+      task.message = 'Full-history downloads are available in the Tauri desktop runtime.';
+      task.updatedAt = Date.now();
+    }
+
+    return task ?? null;
+  }
+
+  return invoke<CacheTask | null>('cancel_cache_task', { id });
+}
+
+export async function retryCacheTask(id: string): Promise<CacheTask> {
+  if (!isTauriRuntime) {
+    const task = previewCacheTasks.find((candidate) => candidate.id === id);
+
+    if (!task) {
+      throw new Error(`cache task not found: ${id}`);
+    }
+
+    task.status = 'cancelled';
+    task.updatedAt = Date.now();
+
+    return task;
+  }
+
+  return invoke<CacheTask>('retry_cache_task', { id });
+}
+
 export async function clearCache(request: CacheClearRequest): Promise<CacheClearResult> {
   if (!isTauriRuntime) {
     return { deletedRows: 0 };
@@ -286,7 +355,7 @@ export async function exportKlinesCsv(request: KlineRequest): Promise<CsvExport>
 export async function exportConfig(): Promise<string> {
   if (!isTauriRuntime) {
     return JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       exportedAt: Date.now(),
       settings: await getSettings(),
       watchlist: await getWatchlist(previewSettings.market),
@@ -308,10 +377,7 @@ export async function importConfig(content: string): Promise<ConfigImportResult>
     }>;
 
     if (config.settings) {
-      previewSettings = {
-        ...config.settings,
-        indicators: normalizePreviewIndicatorSettings(config.settings.indicators),
-      };
+      previewSettings = validateAppSettings(config.settings);
     }
 
     if (Array.isArray(config.watchlist)) {
@@ -438,41 +504,85 @@ export async function runPerformanceBenchmark(request: KlineRequest): Promise<Be
 const previewDatasetCache = new Map<string, Promise<ChartDatasetExport | null>>();
 const previewIndicatorInstances = new Map<string, IndicatorInstance[]>();
 const previewIndicatorScopesInitialized = new Set<string>();
-let previewSettings: AppSettings = {
-  market: 'usdM',
-  symbol: 'BTCUSDT',
-  leftInterval: '5m',
-  rightInterval: '1h',
-  theme: 'dark',
-  language: 'zh',
-  indicators: defaultIndicatorSettings(),
-};
+let previewSettings: AppSettings = defaultPreviewSettings();
+let previewCacheTasks: CacheTask[] = [];
+const supportedIntervals = ['1m', '3m', '5m', '15m', '1h', '2h', '4h', '1d', '1W', '1M'];
+const supportedChartLimits = [1000, 100000, 1000000];
+const supportedDrawingTypes = [
+  'horizontal-line',
+  'trend-line',
+  'vertical-line',
+  'rectangle',
+  'text',
+  'measurement',
+];
 const previewWatchlists: Record<Market, string[]> = {
   spot: ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'],
   usdM: ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'],
 };
 let previewDrawings: DrawingObject[] = [];
 
+export function resetPreviewStateForTests() {
+  previewIndicatorInstances.clear();
+  previewIndicatorScopesInitialized.clear();
+  previewSettings = defaultPreviewSettings();
+  previewWatchlists.spot = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'];
+  previewWatchlists.usdM = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT'];
+  previewCacheTasks = [];
+  previewDrawings = [];
+}
+
+export function setPreviewSettingsForTests(settings: unknown) {
+  previewSettings = settings as AppSettings;
+}
+
+export function setPreviewCacheTasksForTests(tasks: CacheTask[]) {
+  previewCacheTasks = tasks.map((task) => ({ ...task }));
+}
+
+function defaultPreviewSettings(): AppSettings {
+  return {
+    market: 'usdM',
+    symbol: 'BTCUSDT',
+    leftInterval: '5m',
+    rightInterval: '1h',
+    theme: 'dark',
+    language: 'zh',
+    chartLimit: 1000,
+    indicatorConfigChart: 'left',
+    drawingType: 'horizontal-line',
+  };
+}
+
+function normalizeStoredAppSettings(settings: AppSettings): AppSettings {
+  const defaults = defaultPreviewSettings();
+
+  return validateAppSettings({
+    ...settings,
+    chartLimit: settings.chartLimit ?? defaults.chartLimit,
+    indicatorConfigChart: settings.indicatorConfigChart ?? defaults.indicatorConfigChart,
+    drawingType: settings.drawingType ?? defaults.drawingType,
+  });
+}
+
 export function createDefaultIndicatorInstances(
   chartId: LiveStreamRequest['chartId'],
   interval: string,
-  settings: AppSettings['indicators'] = defaultIndicatorSettings(),
 ): IndicatorInstance[] {
-  const defaults: Array<[boolean, IndicatorParams]> = [
-    [settings?.volume ?? true, { kind: 'volume' }],
-    [settings?.ma ?? true, { kind: 'ma', periods: [5, 10, 30] }],
-    [settings?.ema ?? true, { kind: 'ema', periods: [12, 26] }],
-    [settings?.boll ?? true, { kind: 'boll', period: 20, multiplier: 2 }],
-    [settings?.macd ?? true, { kind: 'macd', shortPeriod: 12, longPeriod: 26, signalPeriod: 9 }],
-    [settings?.rsi ?? true, { kind: 'rsi', period: 14 }],
-    [settings?.atr ?? true, { kind: 'atr', period: 14 }],
-    [settings?.kdj ?? true, { kind: 'kdj', period: 9, kSmoothing: 3, dSmoothing: 3 }],
-    [settings?.supertrend ?? true, { kind: 'supertrend', period: 10, multiplier: 3 }],
+  const defaults: IndicatorParams[] = [
+    { kind: 'volume' },
+    { kind: 'ma', periods: [5, 10, 30] },
+    { kind: 'ema', periods: [12, 26] },
+    { kind: 'boll', period: 20, multiplier: 2 },
+    { kind: 'macd', shortPeriod: 12, longPeriod: 26, signalPeriod: 9 },
+    { kind: 'rsi', period: 14 },
+    { kind: 'atr', period: 14 },
+    { kind: 'kdj', period: 9, kSmoothing: 3, dSmoothing: 3 },
+    { kind: 'supertrend', period: 10, multiplier: 3 },
   ];
 
   return defaults
-    .filter(([enabled]) => enabled)
-    .map(([, params], position) =>
+    .map((params, position) =>
       normalizePreviewIndicatorInstance({
         id: `${chartId}-${interval}-${params.kind}`,
         chartId,
@@ -496,7 +606,7 @@ function ensurePreviewIndicatorScope(chartId: LiveStreamRequest['chartId'], inte
     return [...(current ?? [])];
   }
 
-  const defaults = createDefaultIndicatorInstances(chartId, interval, previewSettings.indicators);
+  const defaults = createDefaultIndicatorInstances(chartId, interval);
   previewIndicatorInstances.set(key, defaults);
   previewIndicatorScopesInitialized.add(key);
 
@@ -532,6 +642,59 @@ function normalizePreviewIndicatorInstance(instance: IndicatorInstance): Indicat
 
 function indicatorScopeKey(chartId: LiveStreamRequest['chartId'], interval: string) {
   return `${chartId}:${interval}`;
+}
+
+function validateAppSettings(settings: AppSettings): AppSettings {
+  const requiredKeys: Array<keyof AppSettings> = [
+    'market',
+    'symbol',
+    'leftInterval',
+    'rightInterval',
+    'theme',
+    'language',
+    'chartLimit',
+    'indicatorConfigChart',
+    'drawingType',
+  ];
+
+  for (const key of requiredKeys) {
+    if (settings[key] === undefined || settings[key] === null) {
+      throw new Error(`app-settings is missing required field: ${key}`);
+    }
+  }
+
+  if (settings.market !== 'spot' && settings.market !== 'usdM') {
+    throw new Error(`unsupported market setting: ${settings.market}`);
+  }
+
+  if (!settings.symbol.trim()) {
+    throw new Error('symbol setting is required');
+  }
+
+  if (!supportedIntervals.includes(settings.leftInterval)) {
+    throw new Error(`unsupported leftInterval setting: ${settings.leftInterval}`);
+  }
+
+  if (!supportedIntervals.includes(settings.rightInterval)) {
+    throw new Error(`unsupported rightInterval setting: ${settings.rightInterval}`);
+  }
+
+  if (!supportedChartLimits.includes(settings.chartLimit)) {
+    throw new Error(`unsupported chartLimit setting: ${settings.chartLimit}`);
+  }
+
+  if (settings.indicatorConfigChart !== 'left' && settings.indicatorConfigChart !== 'right') {
+    throw new Error(`unsupported indicatorConfigChart setting: ${settings.indicatorConfigChart}`);
+  }
+
+  if (!supportedDrawingTypes.includes(settings.drawingType)) {
+    throw new Error(`unsupported drawingType setting: ${settings.drawingType}`);
+  }
+
+  return {
+    ...settings,
+    symbol: settings.symbol.toUpperCase(),
+  };
 }
 
 function indicatorName(params: IndicatorParams) {
@@ -1024,34 +1187,6 @@ function wilderAverage(values: number[], period: number) {
   }
 
   return result;
-}
-
-function defaultIndicatorSettings(): AppSettings['indicators'] {
-  return {
-    volume: true,
-    ma: true,
-    ema: true,
-    boll: true,
-    macd: true,
-    rsi: true,
-    atr: true,
-    kdj: true,
-    supertrend: true,
-  };
-}
-
-function normalizePreviewIndicatorSettings(settings: Partial<AppSettings['indicators']> | undefined): AppSettings['indicators'] {
-  return {
-    volume: settings?.volume ?? true,
-    ma: settings?.ma ?? true,
-    ema: settings?.ema ?? true,
-    boll: settings?.boll ?? true,
-    macd: settings?.macd ?? true,
-    rsi: settings?.rsi ?? true,
-    atr: settings?.atr ?? true,
-    kdj: settings?.kdj ?? true,
-    supertrend: settings?.supertrend ?? true,
-  };
 }
 
 async function loadPreviewDataset(request: KlineRequest): Promise<ChartDatasetExport | null> {

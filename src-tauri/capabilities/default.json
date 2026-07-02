@@ -5,9 +5,8 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:webview:allow-set-webview-auto-resize",
     "dialog:default",
-    "fs:default",
-    "opener:default",
-    "shell:allow-open"
+    "fs:default"
   ]
 }

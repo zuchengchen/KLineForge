@@ -23,10 +23,13 @@
     "benchmark:archive:100k": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 100000 --output artifacts/performance/archive-100k-benchmark.json",
     "benchmark:archive:1m": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 1000000 --output artifacts/performance/archive-1m-benchmark.json",
     "verify:market-data": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-market-smoke -- --output artifacts/performance/market-data-smoke.json",
+    "verify:full-history": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-full-history -- --market usdM --symbol BTCUSDT --interval 1h --output artifacts/performance/full-history-usdm-btcusdt-1h.json",
     "prepare:chart-dataset:100k": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 100000 --with-indicators --output artifacts/performance/archive-100k-benchmark.json --chart-dataset-output artifacts/performance/chart-dataset-100k.json",
     "prepare:chart-dataset:1m": "cargo run --manifest-path src-tauri/Cargo.toml --bin klineforge-benchmark -- --archive-target 1000000 --output artifacts/performance/archive-1m-benchmark.json --chart-dataset-output artifacts/performance/chart-dataset-1m.json",
     "verify:render": "node scripts/verify-tauri-render.mjs",
     "verify:indicator-instances": "node scripts/verify-indicator-instances.mjs",
+    "verify:independent-chart-viewports": "node scripts/verify-independent-chart-viewports.mjs",
+    "verify:workspace-scroll": "node scripts/verify-workspace-scroll.mjs",
     "verify:large-chart:100k": "node scripts/verify-large-chart-interaction.mjs http://127.0.0.1:4173/ 100000",
     "verify:large-chart:1m": "node scripts/verify-large-chart-interaction.mjs http://127.0.0.1:4173/ 1000000"
   },

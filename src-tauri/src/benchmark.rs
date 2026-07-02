@@ -1,12 +1,11 @@
 use std::{
     fs,
-    io::{Cursor, Read},
     path::{Path, PathBuf},
     time::Instant,
 };
 
 use crate::{
-    binance::BinanceClient,
+    binance::{BinanceClient, archive_url},
     db::{Database, now_ms},
     domain::{BenchmarkSummary, ChartPoint, IndicatorValue, Kline, KlineRequest, Market},
     error::{AppError, AppResult},
@@ -304,27 +303,25 @@ async fn fetch_archive_klines(request: &KlineRequest, target_rows: usize) -> App
         ));
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent("KLineForge/0.1.0-tauri archive-benchmark")
-        .build()?;
+    let client = BinanceClient::new();
     let mut rows = Vec::with_capacity(target_rows);
 
     for (year, month) in ARCHIVE_MONTHS {
-        let url = archive_url(
-            request.market,
-            &request.symbol,
-            &request.interval,
-            *year,
-            *month,
-        );
-        let bytes = client
-            .get(url)
-            .send()
+        let Some(mut parsed) = client
+            .get_monthly_archive_klines(request, *year, *month)
             .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
-        let mut parsed = parse_archive_zip(request, &bytes)?;
+        else {
+            return Err(AppError::Message(format!(
+                "archive benchmark missing {}",
+                archive_url(
+                    request.market,
+                    &request.symbol,
+                    &request.interval,
+                    *year,
+                    *month,
+                )
+            )));
+        };
         rows.append(&mut parsed);
 
         if rows.len() >= target_rows {
@@ -344,74 +341,6 @@ async fn fetch_archive_klines(request: &KlineRequest, target_rows: usize) -> App
     }
 
     Ok(rows)
-}
-
-fn archive_url(market: Market, symbol: &str, interval: &str, year: i32, month: u32) -> String {
-    let symbol = symbol.to_uppercase();
-    let scope = match market {
-        Market::Spot => "spot",
-        Market::UsdM => "futures/um",
-    };
-
-    format!(
-        "https://data.binance.vision/data/{scope}/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month:02}.zip"
-    )
-}
-
-fn parse_archive_zip(request: &KlineRequest, bytes: &[u8]) -> AppResult<Vec<Kline>> {
-    let reader = Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(reader)
-        .map_err(|error| AppError::Message(format!("failed to read archive zip: {error}")))?;
-    let mut rows = Vec::new();
-
-    for index in 0..archive.len() {
-        let mut file = archive
-            .by_index(index)
-            .map_err(|error| AppError::Message(format!("failed to read archive file: {error}")))?;
-
-        if !file.name().ends_with(".csv") {
-            continue;
-        }
-
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        rows.extend(parse_archive_csv(request, &content));
-    }
-
-    Ok(rows)
-}
-
-fn parse_archive_csv(request: &KlineRequest, content: &str) -> Vec<Kline> {
-    content
-        .lines()
-        .filter_map(|line| {
-            let columns: Vec<&str> = line.split(',').collect();
-
-            if columns.len() < 11 || columns[0] == "open_time" {
-                return None;
-            }
-
-            Some(Kline {
-                market: request.market.as_str().to_string(),
-                symbol: request.symbol.to_uppercase(),
-                interval: request.interval.clone(),
-                open_time: columns[0].parse().ok()?,
-                open: columns[1].to_string(),
-                high: columns[2].to_string(),
-                low: columns[3].to_string(),
-                close: columns[4].to_string(),
-                volume: columns[5].to_string(),
-                close_time: columns[6].parse().ok()?,
-                quote_volume: columns[7].to_string(),
-                trade_count: columns[8].parse().unwrap_or_default(),
-                taker_buy_base_volume: columns[9].to_string(),
-                taker_buy_quote_volume: columns[10].to_string(),
-                is_closed: true,
-                source: "binance-public-data".to_string(),
-                updated_at: now_ms(),
-            })
-        })
-        .collect()
 }
 
 fn generate_fallback_klines(request: &KlineRequest, count: usize) -> Vec<Kline> {

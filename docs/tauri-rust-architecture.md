@@ -32,7 +32,7 @@ Current command/event surface:
 
 The app remains a public-market-data charting app. It does not introduce trading, accounts, API keys, private exchange data, cloud sync or remote user configuration storage.
 
-Tauri capabilities are intentionally small and should stay limited to the desktop shell defaults, dialog/file operations needed by import/export, opener support and explicitly approved local resources.
+Tauri capabilities are intentionally small and should stay limited to the desktop shell defaults plus dialog/file operations needed by import/export.
 
 ## Data Model
 
@@ -43,12 +43,12 @@ SQLite migrations live in `src-tauri/migrations/`. The initial schema includes:
 3. `kline_ranges`
 4. `watchlists`
 5. `drawings`
-6. `indicator_configs`
+6. `indicator_instances`
 7. `settings`
 8. `cache_tasks`
 9. `metadata`
 
-Old IndexedDB/localStorage data is not migrated on this branch. New data starts from the SQLite schema.
+Local data starts from the current SQLite schema.
 
 ## Current Migration Status
 
@@ -61,7 +61,7 @@ The current architecture slice is runnable and now covers the core data path:
 5. Lightweight Charts dual-pane chart shell.
 6. Rust WebSocket kline stream supervisor per chart.
 7. Rust Volume/MA/EMA/BOLL/MACD/RSI/ATR/KDJ/Supertrend calculation and chart display path.
-8. CSV export and new-schema config import/export.
+8. CSV export and current config import/export.
 9. Cache summary, clear-current-symbol workflow and per cached market/symbol/interval clear action.
 10. SQLite-backed drawing persistence for horizontal line, trend line, vertical line, rectangle, text and measurement annotations.
 11. Watchlist add/remove/reorder and chart PNG export.
@@ -70,7 +70,7 @@ The current architecture slice is runnable and now covers the core data path:
 14. Spot/USD-M market-data smoke covering history, market info, symbols and live WebSocket kline.
 15. Cache reads now require enough rows to satisfy the requested limit before returning a SQLite hit, so small old cache windows do not block larger chart or verification requests from being refetched.
 
-Remaining MVP migration work is tracked in `docs/tauri-rust-mvp-migration.md`.
+Current implementation status is tracked in `docs/current-status.md`.
 
 Known first-stage degradations:
 

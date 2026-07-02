@@ -136,7 +136,7 @@ async function fillScopeToLimit(page) {
 async function expectScope(page, scope, names) {
   await page.waitForFunction(
     ({ scope, names }) => {
-      const state = window.__KLINEFORGE_INDICATORS__ ?? {};
+      const state = globalThis.__KLINEFORGE_INDICATORS__ ?? {};
       const rows = state[scope] ?? [];
 
       return names.every((name) => rows.some((row) => row.name === name));
@@ -149,7 +149,7 @@ async function expectScope(page, scope, names) {
 async function expectMissing(page, scope, name) {
   await page.waitForFunction(
     ({ scope, name }) => {
-      const state = window.__KLINEFORGE_INDICATORS__ ?? {};
+      const state = globalThis.__KLINEFORGE_INDICATORS__ ?? {};
       const rows = state[scope] ?? [];
 
       return !rows.some((row) => row.name === name);
@@ -168,7 +168,7 @@ async function expectInstance(page, scope, name, assertion) {
 }
 
 async function readIndicatorState(page) {
-  return page.evaluate(() => window.__KLINEFORGE_INDICATORS__ ?? {});
+  return page.evaluate(() => globalThis.__KLINEFORGE_INDICATORS__ ?? {});
 }
 
 async function selectToolbarSelect(page, index, value) {

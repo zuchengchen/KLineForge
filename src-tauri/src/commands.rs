@@ -1,3 +1,8 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
 use tauri::{Emitter, State};
 
 use futures_util::StreamExt;
@@ -5,17 +10,20 @@ use futures_util::StreamExt;
 use crate::{
     benchmark::run_benchmark,
     binance::parse_ws_kline,
-    db::now_ms,
+    db::{IndicatorSeriesCacheEntry, KlineDataVersion, now_ms},
     domain::{
         AppConfigExport, AppSettings, BenchmarkSummary, CacheClearRequest, CacheClearResult,
-        CacheSummary, ChartDataResponse, ChartId, ChartPoint, ConfigImportResult, CsvExport,
-        DrawingObject, DrawingQuery, HealthStatus, IndicatorCalculationRequest, IndicatorInstance,
-        IndicatorResponse, IndicatorScope, KlineRequest, Leaderboards, LiveKlineEvent,
-        LiveStreamRequest, MAX_INDICATOR_CALCULATION_ROWS, Market, MarketInfoSnapshot,
-        SymbolSummary, WatchlistMutation, WatchlistReorderRequest, default_indicator_instances,
-        interval_ms,
+        CacheSummary, CacheTask, ChartDataResponse, ChartId, ChartPoint, ConfigImportResult,
+        CsvExport, DrawingObject, DrawingQuery, HealthStatus, IndicatorCalculationRequest,
+        IndicatorInstance, IndicatorResponse, IndicatorScope, KlineRequest, Leaderboards,
+        LiveKlineEvent, LiveStreamRequest, MAX_INDICATOR_CALCULATION_ROWS, Market,
+        MarketInfoSnapshot, SymbolSummary, WatchlistMutation, WatchlistReorderRequest,
+        default_indicator_instances, interval_ms,
     },
     error::{AppError, AppResult},
+    history_tasks::{
+        FullHistoryEnqueueRequest, enqueue_full_history_tasks as enqueue_full_history_task_scopes,
+    },
     indicators::calculate_indicator_series,
     state::AppState,
 };
@@ -39,12 +47,17 @@ pub async fn health(state: State<'_, AppState>) -> AppResult<HealthStatus> {
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> AppResult<AppSettings> {
-    let settings = state
+    let Some(value) = state.db.setting_json("app-settings").await? else {
+        return Ok(AppSettings::default());
+    };
+
+    let settings = serde_json::from_value::<AppSettings>(value)
+        .map_err(|error| AppError::Message(format!("invalid app-settings: {error}")))?
+        .validated()?;
+    state
         .db
-        .setting_json("app-settings")
-        .await?
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default();
+        .upsert_setting_json("app-settings", &serde_json::to_value(&settings)?)
+        .await?;
 
     Ok(settings)
 }
@@ -54,6 +67,7 @@ pub async fn save_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> AppResult<AppSettings> {
+    let settings = settings.validated()?;
     state
         .db
         .upsert_setting_json("app-settings", &serde_json::to_value(&settings)?)
@@ -137,11 +151,64 @@ pub async fn get_indicators(
         });
     }
 
+    let row_count = if request.limit.is_none() {
+        state.db.count_klines(&request).await?
+    } else {
+        0
+    };
+    if row_count > i64::from(max_rows) {
+        return Ok(IndicatorResponse {
+            instances,
+            series: Vec::new(),
+            skipped_reason: Some(format!(
+                "Indicator calculation skipped above {} rows",
+                max_rows
+            )),
+        });
+    }
+
+    let kline_version = state.db.kline_data_version(&request).await?;
+    let instances_hash = indicator_instances_hash(&instances)?;
+    let cache_key = indicator_series_cache_key(
+        calculation.chart_id,
+        &request,
+        &kline_version,
+        &instances_hash,
+    );
+    if let Some(cache) = state.db.indicator_series_cache(&cache_key).await?
+        && cache.kline_version == kline_version
+        && cache.instances_hash == instances_hash
+    {
+        return Ok(IndicatorResponse {
+            instances,
+            series: cache.series,
+            skipped_reason: None,
+        });
+    }
+
     let rows = state.db.read_klines(&request).await?;
     let points: Vec<ChartPoint> = rows.iter().map(ChartPoint::from).collect();
+    let series = calculate_indicator_series(&points, &instances);
+
+    state
+        .db
+        .upsert_indicator_series_cache(&IndicatorSeriesCacheEntry {
+            cache_key,
+            market: request.market,
+            symbol: request.symbol.to_uppercase(),
+            interval: request.interval.clone(),
+            chart_id: calculation.chart_id,
+            request_start_time: request.start_time.unwrap_or(0),
+            request_end_time: request.end_time.unwrap_or(i64::MAX),
+            request_limit: request.limit,
+            kline_version,
+            instances_hash,
+            series: series.clone(),
+        })
+        .await?;
 
     Ok(IndicatorResponse {
-        series: calculate_indicator_series(&points, &instances),
+        series,
         instances,
         skipped_reason: None,
     })
@@ -303,6 +370,32 @@ pub async fn get_cache_summary(state: State<'_, AppState>) -> AppResult<Vec<Cach
 }
 
 #[tauri::command]
+pub async fn get_cache_tasks(state: State<'_, AppState>) -> AppResult<Vec<CacheTask>> {
+    state.db.cache_tasks().await
+}
+
+#[tauri::command]
+pub async fn enqueue_full_history_tasks(
+    state: State<'_, AppState>,
+    request: FullHistoryEnqueueRequest,
+) -> AppResult<Vec<CacheTask>> {
+    enqueue_full_history_task_scopes(state.inner(), request).await
+}
+
+#[tauri::command]
+pub async fn cancel_cache_task(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Option<CacheTask>> {
+    state.history_tasks.cancel(state.inner(), &id).await
+}
+
+#[tauri::command]
+pub async fn retry_cache_task(state: State<'_, AppState>, id: String) -> AppResult<CacheTask> {
+    state.history_tasks.retry(state.inner(), &id).await
+}
+
+#[tauri::command]
 pub async fn clear_cache(
     state: State<'_, AppState>,
     request: CacheClearRequest,
@@ -381,7 +474,7 @@ pub async fn export_config(state: State<'_, AppState>) -> AppResult<String> {
     .await?;
 
     serde_json::to_string_pretty(&AppConfigExport {
-        schema_version: 2,
+        schema_version: 3,
         exported_at: now_ms(),
         settings,
         watchlist,
@@ -654,13 +747,7 @@ async fn ensure_indicator_scope_initialized(
         return Ok(existing);
     }
 
-    let settings = state
-        .db
-        .setting_json("app-settings")
-        .await?
-        .and_then(|value| serde_json::from_value::<AppSettings>(value).ok())
-        .unwrap_or_default();
-    let defaults = default_indicator_instances(chart_id, interval, &settings.indicators);
+    let defaults = default_indicator_instances(chart_id, interval);
     let saved = state.db.save_indicator_instances(&defaults).await?;
     state
         .db
@@ -675,6 +762,37 @@ fn indicator_scope_marker_key(chart_id: ChartId, interval: &str) -> String {
         "indicator-scope-initialized:{}:{interval}",
         chart_id.as_str()
     )
+}
+
+fn indicator_instances_hash(instances: &[IndicatorInstance]) -> AppResult<String> {
+    let mut hasher = DefaultHasher::new();
+    serde_json::to_string(instances)?.hash(&mut hasher);
+
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+fn indicator_series_cache_key(
+    chart_id: ChartId,
+    request: &KlineRequest,
+    kline_version: &KlineDataVersion,
+    instances_hash: &str,
+) -> String {
+    let mut hasher = DefaultHasher::new();
+
+    chart_id.as_str().hash(&mut hasher);
+    request.market.as_str().hash(&mut hasher);
+    request.symbol.to_uppercase().hash(&mut hasher);
+    request.interval.hash(&mut hasher);
+    request.start_time.unwrap_or(0).hash(&mut hasher);
+    request.end_time.unwrap_or(i64::MAX).hash(&mut hasher);
+    request.limit.hash(&mut hasher);
+    kline_version.row_count.hash(&mut hasher);
+    kline_version.first_open_time.hash(&mut hasher);
+    kline_version.last_open_time.hash(&mut hasher);
+    kline_version.updated_at.hash(&mut hasher);
+    instances_hash.hash(&mut hasher);
+
+    format!("{:016x}", hasher.finish())
 }
 
 #[derive(Debug, sqlx::FromRow)]

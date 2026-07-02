@@ -38,6 +38,10 @@ button {
   color: #d8e1ee;
 }
 
+.app--sidebar-hidden {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
 .app--light {
   color-scheme: light;
   background: #eef2f7;
@@ -56,6 +60,13 @@ button {
   background: #121720;
   padding: 14px;
   scrollbar-gutter: stable;
+}
+
+.app--sidebar-hidden .sidebar {
+  overflow: hidden;
+  padding: 0;
+  border-right: 0;
+  pointer-events: none;
 }
 
 .app--light .sidebar {
@@ -303,6 +314,27 @@ select {
   color: #f6c343;
 }
 
+.settings-error {
+  border-color: rgba(251, 113, 133, 0.5);
+  background: rgba(127, 29, 29, 0.24);
+}
+
+.settings-error p {
+  margin: 0;
+  color: #fecdd3;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.app--light .settings-error {
+  background: #fff1f2;
+  border-color: #fda4af;
+}
+
+.app--light .settings-error p {
+  color: #9f1239;
+}
+
 .status-list,
 .benchmark-grid {
   display: grid;
@@ -327,9 +359,14 @@ select {
 
 .workspace {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) 190px;
+  grid-template-rows: auto auto auto;
   min-width: 0;
   min-height: 0;
+  max-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .toolbar {
@@ -353,6 +390,11 @@ select {
   align-items: end;
   gap: 10px;
   min-width: 0;
+}
+
+.sidebar-toggle {
+  min-width: 108px;
+  align-self: stretch;
 }
 
 .toolbar__group--meta {
@@ -401,7 +443,7 @@ select {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 1px;
   min-width: 0;
-  min-height: 0;
+  min-height: max(420px, calc(100vh - 58px));
   background: rgba(127, 146, 177, 0.2);
 }
 
@@ -430,6 +472,7 @@ select {
 .chart-pane__surface {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .bottom-dock {
@@ -566,6 +609,57 @@ select {
   color: inherit;
   font-size: 12px;
   text-align: left;
+}
+
+.cache-task-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cache-task {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 6px;
+  background: rgba(56, 189, 248, 0.06);
+  color: #aeb9c9;
+  font-size: 12px;
+}
+
+.cache-task__main,
+.cache-task__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cache-task__main strong,
+.cache-task__main span,
+.cache-task__message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cache-task__main strong {
+  color: #e5eef9;
+}
+
+.cache-task progress {
+  width: 100%;
+  height: 5px;
+  accent-color: #38bdf8;
+}
+
+.cache-task__actions button {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .leaderboards {

@@ -2,12 +2,15 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 import { ChartPane, type ChartPaneMetrics } from './components/ChartPane';
 import {
   addWatchlistSymbol,
+  cancelCacheTask,
   clearCache,
   deleteDrawing,
   deleteIndicatorInstance,
+  enqueueFullHistoryTasks,
   exportConfig,
   exportKlinesCsv,
   getCacheSummary,
+  getCacheTasks,
   getChartData,
   getDrawings,
   getHealth,
@@ -23,6 +26,7 @@ import {
   listenLiveKlineUpdates,
   removeWatchlistSymbol,
   reorderWatchlist,
+  retryCacheTask,
   runPerformanceBenchmark,
   saveIndicatorInstance,
   saveSettings,
@@ -35,6 +39,7 @@ import type {
   AppSettings,
   BenchmarkSummary,
   CacheSummary,
+  CacheTask,
   ChartDataResponse,
   ChartId,
   ChartPoint,
@@ -44,15 +49,14 @@ import type {
   IndicatorLineStyle,
   IndicatorParams,
   IndicatorStyle,
-  IndicatorSettings,
   IndicatorScope,
   KlineRequest,
 } from './services/types';
-import type { LogicalRange } from 'lightweight-charts';
 
 const intervals = ['1m', '3m', '5m', '15m', '1h', '2h', '4h', '1d', '1W', '1M'];
 const backgroundPrefetchIntervals = ['1h', '2h', '4h', '1d', '1W', '1M'];
 const maxBackgroundPrefetchRows = 1_500;
+const maxIndicatorRows = 200_000;
 const emptyKlineRetryMs = 5_000;
 
 const migrationItems = [
@@ -70,17 +74,6 @@ const migrationItems = [
   ['缓存管理 UI', 'complete'],
   ['中英文 UI', 'complete'],
 ] as const;
-const defaultIndicatorSettings: IndicatorSettings = {
-  volume: true,
-  ma: true,
-  ema: true,
-  boll: true,
-  macd: true,
-  rsi: true,
-  atr: true,
-  kdj: true,
-  supertrend: true,
-};
 const drawingTypes = [
   'horizontal-line',
   'trend-line',
@@ -93,7 +86,6 @@ type DrawingType = (typeof drawingTypes)[number];
 
 type LiveStatus = Partial<Record<ChartId, { source: string; isClosed: boolean; time: number }>>;
 type CrosshairSync = { source: ChartId; time: number; price: number } | null;
-type RangeSync = { source: ChartId; range: LogicalRange } | null;
 type ChartActions = Partial<Record<ChartId, { exportPng: () => string }>>;
 type ChartMetrics = Partial<Record<ChartId, ChartPaneMetrics>>;
 type IndicatorEditorState = {
@@ -105,7 +97,21 @@ type IndicatorEditorState = {
 
 export function App() {
   const initialRows = readInitialPerfRows();
-  const [settings, { refetch: refetchSettings }] = createResource(getSettings);
+  const hasPerfRowsOverride = initialRows >= 100_000;
+  const [settingsError, setSettingsError] = createSignal('');
+  const loadSettings = async () => {
+    try {
+      const loaded = await getSettings();
+      setSettingsError('');
+
+      return loaded;
+    } catch (error) {
+      setSettingsError(`Settings could not be loaded: ${formatError(error)}`);
+
+      return undefined;
+    }
+  };
+  const [settings, { refetch: refetchSettings }] = createResource(loadSettings);
   const [health] = createResource(getHealth);
   const [activeSymbol, setActiveSymbol] = createSignal('BTCUSDT');
   const [market, setMarket] = createSignal<'spot' | 'usdM'>('usdM');
@@ -122,13 +128,14 @@ export function App() {
   const [liveStatus, setLiveStatus] = createSignal<LiveStatus>({});
   const [operationStatus, setOperationStatus] = createSignal('Ready');
   const [symbolFilter, setSymbolFilter] = createSignal('');
+  const [sidebarVisible, setSidebarVisible] = createSignal(true);
   const [crosshairSync, setCrosshairSync] = createSignal<CrosshairSync>(null);
-  const [rangeSync, setRangeSync] = createSignal<RangeSync>(null);
   const [chartActions, setChartActions] = createSignal<ChartActions>({});
-  const [indicatorSettings, setIndicatorSettings] = createSignal<IndicatorSettings>(defaultIndicatorSettings);
   const [indicatorConfigChart, setIndicatorConfigChart] = createSignal<ChartId>('left');
   const [indicatorEditor, setIndicatorEditor] = createSignal<IndicatorEditorState | null>(null);
-  const [lastIndicatorDataRefresh, setLastIndicatorDataRefresh] = createSignal<Partial<Record<ChartId, string>>>({});
+  const [knownFullHistoryRefreshKeys, setKnownFullHistoryRefreshKeys] = createSignal<Set<string>>(new Set());
+  const [fullHistoryRefreshBaselineReady, setFullHistoryRefreshBaselineReady] = createSignal(false);
+  const [lastCompletedFullHistoryRefresh, setLastCompletedFullHistoryRefresh] = createSignal<Partial<Record<ChartId, string>>>({});
   const [drawingType, setDrawingType] = createSignal<DrawingType>('horizontal-line');
   const t = createMemo(() => createTranslator(language()));
 
@@ -139,7 +146,10 @@ export function App() {
       return;
     }
 
-    if (chartLimit() >= 100_000) {
+    const nextChartLimit = hasPerfRowsOverride ? initialRows : loaded.chartLimit;
+    setChartLimit(nextChartLimit);
+
+    if (hasPerfRowsOverride) {
       setMarket('usdM');
       setActiveSymbol('BTCUSDT');
       setLeftInterval('1m');
@@ -153,7 +163,9 @@ export function App() {
 
     setTheme(loaded.theme);
     setLanguage(loaded.language);
-    setIndicatorSettings(normalizeIndicatorSettings(loaded.indicators));
+    setIndicatorConfigChart(loaded.indicatorConfigChart);
+    setDrawingType(loaded.drawingType as DrawingType);
+    setSettingsError('');
   });
 
   const persistSettings = async (patch: Partial<AppSettings>) => {
@@ -164,12 +176,21 @@ export function App() {
       rightInterval: rightInterval(),
       theme: theme(),
       language: language(),
-      indicators: indicatorSettings(),
+      chartLimit: chartLimit(),
+      indicatorConfigChart: indicatorConfigChart(),
+      drawingType: drawingType(),
       ...patch,
     };
 
-    await saveSettings(next);
-    await refetchSettings();
+    try {
+      await saveSettings(next);
+      setSettingsError('');
+      await refetchSettings();
+    } catch (error) {
+      const message = `Settings could not be saved: ${formatError(error)}`;
+      setSettingsError(message);
+      setOperationStatus(message);
+    }
   };
 
   const watchlist = createMemo(() => market());
@@ -178,39 +199,80 @@ export function App() {
   const [leaderboards] = createResource(watchlist, getLeaderboards);
   const marketInfoRequest = createMemo(() => ({ market: market(), symbol: activeSymbol() }));
   const [marketInfo] = createResource(marketInfoRequest, (request) => getMarketInfo(request.market, request.symbol));
+  const chartDataLimit = (chartId: ChartId, request: Pick<KlineRequest, 'market' | 'symbol' | 'interval'>) =>
+    chartDataLimitForHistoryState({
+      chartLimit: chartLimit(),
+      completedRefreshKey: lastCompletedFullHistoryRefresh()[chartId],
+      request,
+    });
   const leftRequest = createMemo<KlineRequest>(() => ({
     market: market(),
     symbol: activeSymbol(),
     interval: leftInterval(),
-    limit: chartLimit(),
+    limit: chartDataLimit('left', {
+      market: market(),
+      symbol: activeSymbol(),
+      interval: leftInterval(),
+    }),
   }));
   const rightRequest = createMemo<KlineRequest>(() => ({
     market: market(),
     symbol: activeSymbol(),
     interval: rightInterval(),
-    limit: chartLimit(),
+    limit: chartDataLimit('right', {
+      market: market(),
+      symbol: activeSymbol(),
+      interval: rightInterval(),
+    }),
   }));
-  const leftIndicatorRequest = createMemo(() => ({
-    chartId: 'left' as const,
-    request: {
-      ...leftRequest(),
-      limit: chartLimit() > 200_000 ? 0 : chartLimit(),
-    },
-    maxRows: 200_000,
-  }));
-  const rightIndicatorRequest = createMemo(() => ({
-    chartId: 'right' as const,
-    request: {
-      ...rightRequest(),
-      limit: chartLimit() > 200_000 ? 0 : chartLimit(),
-    },
-    maxRows: 200_000,
-  }));
+  const leftIndicatorRequest = createMemo(() => {
+    const request = leftRequest();
+    const loadedRows = leftPoints().length;
+
+    if (loadedRows === 0) {
+      return false;
+    }
+
+    return {
+      chartId: 'left' as const,
+      request: {
+        ...request,
+        limit: chartIndicatorLimitForData({
+          requestLimit: request.limit,
+          loadedRows,
+          maxRows: maxIndicatorRows,
+        }),
+      },
+      maxRows: maxIndicatorRows,
+    };
+  });
+  const rightIndicatorRequest = createMemo(() => {
+    const request = rightRequest();
+    const loadedRows = rightPoints().length;
+
+    if (loadedRows === 0) {
+      return false;
+    }
+
+    return {
+      chartId: 'right' as const,
+      request: {
+        ...request,
+        limit: chartIndicatorLimitForData({
+          requestLimit: request.limit,
+          loadedRows,
+          maxRows: maxIndicatorRows,
+        }),
+      },
+      maxRows: maxIndicatorRows,
+    };
+  });
   const [leftData, { refetch: refetchLeft }] = createResource(leftRequest, getChartData);
   const [rightData, { refetch: refetchRight }] = createResource(rightRequest, getChartData);
   const [leftIndicators, { refetch: refetchLeftIndicators }] = createResource(leftIndicatorRequest, getIndicators);
   const [rightIndicators, { refetch: refetchRightIndicators }] = createResource(rightIndicatorRequest, getIndicators);
   const [cacheSummary, { refetch: refetchCacheSummary }] = createResource(getCacheSummary);
+  const [cacheTasks, { refetch: refetchCacheTasks }] = createResource(getCacheTasks);
   const indicatorScope = createMemo<IndicatorScope>(() => ({
     chartId: indicatorConfigChart(),
     interval: indicatorConfigChart() === 'left' ? leftInterval() : rightInterval(),
@@ -233,6 +295,9 @@ export function App() {
   }));
   const [leftDrawings, { refetch: refetchLeftDrawings }] = createResource(leftDrawingQuery, getDrawings);
   const [rightDrawings, { refetch: refetchRightDrawings }] = createResource(rightDrawingQuery, getDrawings);
+  const selectedIndicatorRows = createMemo(() =>
+    indicatorConfigChart() === 'left' ? leftPoints().length : rightPoints().length,
+  );
   const filteredSymbols = createMemo(() => {
     const query = symbolFilter().trim().toUpperCase();
     const rows = symbolDirectory() ?? [];
@@ -249,27 +314,11 @@ export function App() {
   createEffect(() => {
     const data = leftData();
     setLeftPoints(data?.points ?? []);
-
-    if (data?.points.length) {
-      const key = `${chartDataResetKey(leftRequest())}:${data.points.length}:${data.source}`;
-      if (lastIndicatorDataRefresh().left !== key) {
-        setLastIndicatorDataRefresh((current) => ({ ...current, left: key }));
-        void refetchLeftIndicators();
-      }
-    }
   });
 
   createEffect(() => {
     const data = rightData();
     setRightPoints(data?.points ?? []);
-
-    if (data?.points.length) {
-      const key = `${chartDataResetKey(rightRequest())}:${data.points.length}:${data.source}`;
-      if (lastIndicatorDataRefresh().right !== key) {
-        setLastIndicatorDataRefresh((current) => ({ ...current, right: key }));
-        void refetchRightIndicators();
-      }
-    }
   });
 
   createEffect(() => {
@@ -346,10 +395,10 @@ export function App() {
   });
 
   createEffect(() => {
-    const _scope = indicatorScope();
-    const _instances = indicatorInstances();
-    const _left = leftIndicators();
-    const _right = rightIndicators();
+    void indicatorScope();
+    void indicatorInstances();
+    void leftIndicators();
+    void rightIndicators();
     publishIndicatorState();
   });
 
@@ -367,16 +416,93 @@ export function App() {
       });
 
       if (requests.length > 0) {
-        void prefetchChartData(requests)
-          .then(() => refetchCacheSummary())
-          .catch((error: unknown) => {
-            console.warn('large-period prefetch failed', error);
-          });
+        const cancelPrefetch = scheduleLowPriorityWork(() => {
+          void prefetchChartData(requests)
+            .then(() => refetchCacheSummary())
+            .catch((error: unknown) => {
+              console.warn('large-period prefetch failed', error);
+            });
+        });
+
+        onCleanup(cancelPrefetch);
       }
     }
 
     return key;
   }, undefined);
+
+  createEffect(() => {
+    const tasks = cacheTasks() ?? [];
+    const hasActiveTask = tasks.some((task) => task.status === 'queued' || task.status === 'running');
+
+    if (!hasActiveTask) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void Promise.all([refetchCacheTasks(), refetchCacheSummary()]);
+    }, 2_000);
+
+    onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
+    const tasks = cacheTasks();
+
+    if (!tasks) {
+      return;
+    }
+
+    const completedKeys = completedFullHistoryRefreshKeys(tasks);
+
+    if (!fullHistoryRefreshBaselineReady()) {
+      setKnownFullHistoryRefreshKeys(completedKeys);
+      setFullHistoryRefreshBaselineReady(true);
+      return;
+    }
+
+    const leftRefreshKey = completedFullHistoryRefreshKey(tasks, market(), activeSymbol(), leftInterval());
+    const rightRefreshKey = completedFullHistoryRefreshKey(tasks, market(), activeSymbol(), rightInterval());
+    const knownRefreshKeys = knownFullHistoryRefreshKeys();
+    const lastRefreshed = lastCompletedFullHistoryRefresh();
+
+    if (
+      leftRefreshKey &&
+      shouldApplyCompletedFullHistoryRefresh({
+        refreshKey: leftRefreshKey,
+        knownRefreshKeys,
+        appliedRefreshKey: lastRefreshed.left,
+      })
+    ) {
+      setLastCompletedFullHistoryRefresh((current) => ({ ...current, left: leftRefreshKey }));
+      void refetchLeft();
+    }
+
+    if (
+      rightRefreshKey &&
+      shouldApplyCompletedFullHistoryRefresh({
+        refreshKey: rightRefreshKey,
+        knownRefreshKeys,
+        appliedRefreshKey: lastRefreshed.right,
+      })
+    ) {
+      setLastCompletedFullHistoryRefresh((current) => ({ ...current, right: rightRefreshKey }));
+      void refetchRight();
+    }
+
+    const nextKnownRefreshKeys = new Set(knownRefreshKeys);
+    let hasNewCompletedKey = false;
+    for (const key of completedKeys) {
+      if (!nextKnownRefreshKeys.has(key)) {
+        nextKnownRefreshKeys.add(key);
+        hasNewCompletedKey = true;
+      }
+    }
+
+    if (hasNewCompletedKey) {
+      setKnownFullHistoryRefreshKeys(nextKnownRefreshKeys);
+    }
+  });
 
   createEffect((previousKey: string | undefined) => {
     const request = leftRequest();
@@ -405,7 +531,7 @@ export function App() {
 
     void listenLiveKlineUpdates((event) => {
       const updatePoints = event.chartId === 'left' ? setLeftPoints : setRightPoints;
-      updatePoints((points) => mergeChartPoint(points, event.point, Math.max(chartLimit(), 5_000)));
+      updatePoints((points) => mergeChartPoint(points, event.point, liveMergeLimit(event.chartId)));
       setLiveStatus((status) => ({
         ...status,
         [event.chartId]: {
@@ -416,7 +542,7 @@ export function App() {
       }));
 
       if (event.isClosed) {
-        void (event.chartId === 'left' ? refetchLeftIndicators() : refetchRightIndicators());
+        void (event.chartId === 'left' ? refetchLeft() : refetchRight());
       }
     }).then((cleanup) => {
       unlisten = cleanup;
@@ -429,17 +555,28 @@ export function App() {
     });
   });
 
+  const liveMergeLimit = (chartId: ChartId) => {
+    const request = chartId === 'left' ? leftRequest() : rightRequest();
+
+    return fullHistoryRefreshKeyForRequest(lastCompletedFullHistoryRefresh()[chartId], request)
+      ? Number.MAX_SAFE_INTEGER
+      : Math.max(chartLimit(), 5_000);
+  };
+
   const updateMarket = async (value: 'spot' | 'usdM') => {
     setMarket(value);
     await persistSettings({ market: value });
     await refetchWatchlist();
     await Promise.all([refetchLeft(), refetchRight()]);
+    await enqueueFullHistoryForActiveScopes();
   };
 
   const updateSymbol = async (symbol: string) => {
-    setActiveSymbol(symbol);
-    await persistSettings({ symbol });
+    const nextSymbol = symbol.toUpperCase();
+    setActiveSymbol(nextSymbol);
+    await persistSettings({ symbol: nextSymbol });
     await Promise.all([refetchLeft(), refetchRight()]);
+    await enqueueFullHistoryForActiveScopes();
   };
 
   const addActiveToWatchlist = async () => {
@@ -501,20 +638,27 @@ export function App() {
     }
 
     setOperationStatus('Importing config...');
-    const result = await importConfig(await file.text());
-    setOperationStatus(
-      `Config imported: ${result.watchlistCount} symbols, ${result.drawingCount} drawings, ${result.indicatorCount} indicators`,
-    );
-    await Promise.all([
-      refetchSettings(),
-      refetchWatchlist(),
-      refetchLeft(),
-      refetchRight(),
-      refetchLeftIndicators(),
-      refetchRightIndicators(),
-      refetchIndicatorInstances(),
-      refetchCacheSummary(),
-    ]);
+    try {
+      const result = await importConfig(await file.text());
+      setSettingsError('');
+      setOperationStatus(
+        `Config imported: ${result.watchlistCount} symbols, ${result.drawingCount} drawings, ${result.indicatorCount} indicators`,
+      );
+      await Promise.all([
+        refetchSettings(),
+        refetchWatchlist(),
+        refetchLeft(),
+        refetchRight(),
+        refetchLeftIndicators(),
+        refetchRightIndicators(),
+        refetchIndicatorInstances(),
+        refetchCacheSummary(),
+      ]);
+    } catch (error) {
+      const message = `Config import failed: ${formatError(error)}`;
+      setSettingsError(message);
+      setOperationStatus(message);
+    }
   };
 
   const clearCurrentCache = async () => {
@@ -583,6 +727,76 @@ export function App() {
     await deleteDrawing(drawing.id);
     setOperationStatus(`Drawing deleted: ${drawing.chartId}`);
     await (drawing.chartId === 'left' ? refetchLeftDrawings() : refetchRightDrawings());
+  };
+
+  const updateChartInterval = async (chartId: ChartId, interval: string) => {
+    const currentInterval = chartId === 'left' ? leftInterval() : rightInterval();
+
+    if (interval === currentInterval) {
+      return;
+    }
+
+    setOperationStatus(`Preserving ${chartId} indicator config for ${interval}...`);
+
+    try {
+      await copyIndicatorScope(chartId, currentInterval, interval);
+
+      if (chartId === 'left') {
+        setLeftInterval(interval);
+        await persistSettings({ leftInterval: interval });
+      } else {
+        setRightInterval(interval);
+        await persistSettings({ rightInterval: interval });
+      }
+
+      setOperationStatus(`Interval changed: ${chartId} ${currentInterval} -> ${interval}`);
+      await refreshIndicatorScope(chartId);
+      await enqueueFullHistoryForIntervals([interval, ...backgroundPrefetchIntervals]);
+    } catch (error) {
+      setOperationStatus(`Interval change failed: ${formatError(error)}`);
+    }
+  };
+
+  const enqueueFullHistoryForActiveScopes = async () => {
+    await enqueueFullHistoryForIntervals([leftInterval(), rightInterval(), ...backgroundPrefetchIntervals]);
+  };
+
+  const enqueueFullHistoryForIntervals = async (targetIntervals: string[]) => {
+    const intervals = [...new Set(targetIntervals)];
+    const tasks = await enqueueFullHistoryTasks({
+      market: market(),
+      symbol: activeSymbol(),
+      intervals,
+    });
+    setOperationStatus(`Full-history queue updated: ${tasks.length} intervals`);
+    await refetchCacheTasks();
+  };
+
+  const cancelFullHistoryTask = async (task: CacheTask) => {
+    await cancelCacheTask(task.id);
+    setOperationStatus(`Full-history task cancelled: ${task.symbol} ${task.interval}`);
+    await refetchCacheTasks();
+  };
+
+  const retryFullHistoryTask = async (task: CacheTask) => {
+    await retryCacheTask(task.id);
+    setOperationStatus(`Full-history task queued again: ${task.symbol} ${task.interval}`);
+    await refetchCacheTasks();
+  };
+
+  const copyIndicatorScope = async (chartId: ChartId, sourceInterval: string, targetInterval: string) => {
+    const [sourceInstances, targetInstances] = await Promise.all([
+      listIndicatorInstances({ chartId, interval: sourceInterval }),
+      listIndicatorInstances({ chartId, interval: targetInterval }),
+    ]);
+
+    for (const instance of targetInstances) {
+      await deleteIndicatorInstance(instance.id);
+    }
+
+    for (const [position, instance] of sourceInstances.entries()) {
+      await saveIndicatorInstance(cloneIndicatorForInterval(instance, chartId, targetInterval, position));
+    }
   };
 
   const refreshIndicatorScope = async (chartId = indicatorConfigChart()) => {
@@ -664,13 +878,31 @@ export function App() {
       setLeftInterval('1m');
       setRightInterval('1m');
       setOperationStatus(`Large-data mode: ${value.toLocaleString()} BTCUSDT 1m rows`);
+      await persistSettings({
+        chartLimit: value,
+        market: 'usdM',
+        symbol: 'BTCUSDT',
+        leftInterval: '1m',
+        rightInterval: '1m',
+      });
     } else {
       setOperationStatus(`Chart window: ${value.toLocaleString()} rows`);
+      await persistSettings({ chartLimit: value });
     }
   };
 
+  const updateIndicatorConfigChart = async (chartId: ChartId) => {
+    setIndicatorConfigChart(chartId);
+    await persistSettings({ indicatorConfigChart: chartId });
+  };
+
+  const updateDrawingType = async (type: DrawingType) => {
+    setDrawingType(type);
+    await persistSettings({ drawingType: type });
+  };
+
   return (
-    <main class={`app app--${theme()}`}>
+    <main class={`app app--${theme()}`} classList={{ 'app--sidebar-hidden': !sidebarVisible() }}>
       <aside class="sidebar">
         <div class="brand">
           <strong>{t()('appName')}</strong>
@@ -755,20 +987,27 @@ export function App() {
           </label>
         </section>
 
+        <Show when={settingsError()}>
+          <section class="panel settings-error" data-settings-error>
+            <h2>Settings error</h2>
+            <p>{settingsError()}</p>
+          </section>
+        </Show>
+
         <section class="panel">
           <h2>{t()('indicators')}</h2>
           <div class="indicator-scope">
             <div class="segmented">
               <button
                 classList={{ active: indicatorConfigChart() === 'left' }}
-                onClick={() => setIndicatorConfigChart('left')}
+                onClick={() => void updateIndicatorConfigChart('left')}
                 data-indicator-scope="left"
               >
                 Left
               </button>
               <button
                 classList={{ active: indicatorConfigChart() === 'right' }}
-                onClick={() => setIndicatorConfigChart('right')}
+                onClick={() => void updateIndicatorConfigChart('right')}
                 data-indicator-scope="right"
               >
                 Right
@@ -778,9 +1017,9 @@ export function App() {
               {indicatorScope().chartId} · {indicatorScope().interval}
             </span>
           </div>
-          <Show when={chartLimit() > 200_000}>
+          <Show when={selectedIndicatorRows() > maxIndicatorRows}>
             <p class="indicator-skip" data-indicator-skip>
-              Indicators skipped above 200,000 rows.
+              Indicators skipped above {maxIndicatorRows.toLocaleString()} rows.
             </p>
           </Show>
           <div class="indicator-list" data-indicator-list>
@@ -851,6 +1090,14 @@ export function App() {
       <section class="workspace">
         <header class="toolbar">
           <div class="toolbar__group">
+            <button
+              class="sidebar-toggle"
+              type="button"
+              aria-expanded={sidebarVisible()}
+              onClick={() => setSidebarVisible((visible) => !visible)}
+            >
+              {sidebarVisible() ? 'Hide Sidebar' : 'Show Sidebar'}
+            </button>
             <label>
               {t()('symbol')}
               <input
@@ -866,16 +1113,14 @@ export function App() {
               label={`${t()('interval')} L`}
               value={leftInterval()}
               onChange={(value) => {
-                setLeftInterval(value);
-                void persistSettings({ leftInterval: value });
+                void updateChartInterval('left', value);
               }}
             />
             <IntervalSelect
               label={`${t()('interval')} R`}
               value={rightInterval()}
               onChange={(value) => {
-                setRightInterval(value);
-                void persistSettings({ rightInterval: value });
+                void updateChartInterval('right', value);
               }}
             />
             <RowLimitSelect label={t()('rows')} value={chartLimit()} onChange={(value) => void updateChartLimit(value)} />
@@ -891,6 +1136,7 @@ export function App() {
 
         <section class="chart-grid">
           <ChartPane
+            chartId="left"
             title={`${activeSymbol()} ${leftInterval()}`}
             points={leftPoints}
             indicators={() => leftIndicators()?.series ?? []}
@@ -899,25 +1145,22 @@ export function App() {
             drawings={() => leftDrawings() ?? []}
             liveStatus={() => liveStatus().left}
             resetKey={() => chartDataResetKey(leftRequest())}
+            fitKey={() => `layout:${sidebarVisible() ? 'sidebar' : 'full'}`}
+            fitNextDataKey={() => `${chartDataResetKey(leftRequest())}:history:${lastCompletedFullHistoryRefresh().left ?? 'none'}`}
             syncCrosshair={() =>
               crosshairSync()?.source === 'right'
                 ? { time: crosshairSync()?.time ?? 0, price: crosshairSync()?.price ?? 0 }
                 : null
             }
-            syncRange={() => (rangeSync()?.source === 'right' ? rangeSync()?.range ?? null : null)}
             onCrosshairMove={(point) =>
               setCrosshairSync(point ? { source: 'left', ...point } : crosshairSync()?.source === 'left' ? null : crosshairSync())
             }
-            onVisibleRangeChange={(range) => {
-              if (range) {
-                setRangeSync({ source: 'left', range });
-              }
-            }}
             onReady={(actions) => setChartActions((current) => ({ ...current, left: actions }))}
             onPerformanceUpdate={(metrics) => setChartMetrics((current) => ({ ...current, left: metrics }))}
             theme={theme}
           />
           <ChartPane
+            chartId="right"
             title={`${activeSymbol()} ${rightInterval()}`}
             points={rightPoints}
             indicators={() => rightIndicators()?.series ?? []}
@@ -926,20 +1169,16 @@ export function App() {
             drawings={() => rightDrawings() ?? []}
             liveStatus={() => liveStatus().right}
             resetKey={() => chartDataResetKey(rightRequest())}
+            fitKey={() => `layout:${sidebarVisible() ? 'sidebar' : 'full'}`}
+            fitNextDataKey={() => `${chartDataResetKey(rightRequest())}:history:${lastCompletedFullHistoryRefresh().right ?? 'none'}`}
             syncCrosshair={() =>
               crosshairSync()?.source === 'left'
                 ? { time: crosshairSync()?.time ?? 0, price: crosshairSync()?.price ?? 0 }
                 : null
             }
-            syncRange={() => (rangeSync()?.source === 'left' ? rangeSync()?.range ?? null : null)}
             onCrosshairMove={(point) =>
               setCrosshairSync(point ? { source: 'right', ...point } : crosshairSync()?.source === 'right' ? null : crosshairSync())
             }
-            onVisibleRangeChange={(range) => {
-              if (range) {
-                setRangeSync({ source: 'right', range });
-              }
-            }}
             onReady={(actions) => setChartActions((current) => ({ ...current, right: actions }))}
             onPerformanceUpdate={(metrics) => setChartMetrics((current) => ({ ...current, right: metrics }))}
             theme={theme}
@@ -966,7 +1205,7 @@ export function App() {
             <h2>{t()('workflows')}</h2>
             <label class="inline-select">
               {t()('drawingTool')}
-              <select value={drawingType()} onChange={(event) => setDrawingType(event.currentTarget.value as DrawingType)}>
+              <select value={drawingType()} onChange={(event) => void updateDrawingType(event.currentTarget.value as DrawingType)}>
                 <For each={drawingTypes}>{(type) => <option value={type}>{type}</option>}</For>
               </select>
             </label>
@@ -1015,6 +1254,40 @@ export function App() {
                 )}
               </For>
             </div>
+            <div class="cache-task-list" data-cache-tasks>
+              <For each={(cacheTasks() ?? []).slice(0, 6)}>
+                {(task) => (
+                  <div class="cache-task">
+                    <div class="cache-task__main">
+                      <strong>
+                        {task.symbol} {task.interval}
+                      </strong>
+                      <span>
+                        {task.status} · {Math.round(task.progress * 100)}% · {task.rowsWritten.toLocaleString()} rows
+                      </span>
+                    </div>
+                    <progress value={task.progress} max="1" />
+                    <Show when={task.message}>
+                      <span class="cache-task__message">{task.message}</span>
+                    </Show>
+                    <div class="cache-task__actions">
+                      <button
+                        disabled={task.status !== 'queued' && task.status !== 'running'}
+                        onClick={() => void cancelFullHistoryTask(task)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        disabled={task.status !== 'failed' && task.status !== 'cancelled'}
+                        onClick={() => void retryFullHistoryTask(task)}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
             <div class="leaderboards">
               <Leaderboard title={t()('gainers')} rows={leaderboards()?.gainers ?? []} onSelect={updateSymbol} />
               <Leaderboard title={t()('volume')} rows={leaderboards()?.volume ?? []} onSelect={updateSymbol} />
@@ -1059,13 +1332,6 @@ export function App() {
       </Show>
     </main>
   );
-}
-
-function normalizeIndicatorSettings(settings: Partial<IndicatorSettings> | undefined): IndicatorSettings {
-  return {
-    ...defaultIndicatorSettings,
-    ...settings,
-  };
 }
 
 function createDrawingPayload(type: DrawingType, symbol: string, latest: ChartPoint, previous?: ChartPoint): DrawingObject['payload'] {
@@ -1425,6 +1691,24 @@ function cloneIndicatorInstance(instance: IndicatorInstance): IndicatorInstance 
   return JSON.parse(JSON.stringify(instance)) as IndicatorInstance;
 }
 
+function cloneIndicatorForInterval(
+  instance: IndicatorInstance,
+  chartId: ChartId,
+  interval: string,
+  position: number,
+): IndicatorInstance {
+  const cloned = cloneIndicatorInstance(instance);
+
+  return {
+    ...cloned,
+    id: `${chartId}-${interval}-${cloned.params.kind}-${position}-${Date.now()}`,
+    chartId,
+    interval,
+    position,
+    updatedAt: Date.now(),
+  };
+}
+
 function normalizeEditorInstance(editor: IndicatorEditorState): IndicatorInstance {
   const params =
     editor.instance.params.kind === 'ma' || editor.instance.params.kind === 'ema'
@@ -1680,6 +1964,32 @@ function formatIndicatorNumber(value: number) {
   return Number(value.toFixed(2)).toString();
 }
 
+export function formatError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (error && typeof error === 'object') {
+    const commandError = error as { message?: unknown };
+
+    if (typeof commandError.message === 'string') {
+      return commandError.message;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+
+  return String(error);
+}
+
 function DataBadge(props: { label: string; data?: ChartDataResponse }) {
   return (
     <span class="data-badge">
@@ -1729,6 +2039,80 @@ function requestKey(request: KlineRequest) {
   return `${request.market}:${request.symbol}:${request.interval}`;
 }
 
+function taskScopeKey(market: KlineRequest['market'], symbol: string, interval: string) {
+  return `${market}:${symbol.toUpperCase()}:${interval}`;
+}
+
+export function completedFullHistoryRefreshKey(
+  tasks: CacheTask[],
+  market: KlineRequest['market'],
+  symbol: string,
+  interval: string,
+) {
+  const scopeKey = taskScopeKey(market, symbol, interval);
+  const task = tasks.find((candidate) =>
+    candidate.status === 'complete' &&
+    taskScopeKey(candidate.market, candidate.symbol, candidate.interval) === scopeKey,
+  );
+
+  return task ? `${scopeKey}:${task.updatedAt}` : null;
+}
+
+export function completedFullHistoryRefreshKeys(tasks: CacheTask[]) {
+  return new Set(
+    tasks
+      .filter((task) => task.status === 'complete')
+      .map((task) => `${taskScopeKey(task.market, task.symbol, task.interval)}:${task.updatedAt}`),
+  );
+}
+
+export function shouldApplyCompletedFullHistoryRefresh(params: {
+  refreshKey: string | null;
+  knownRefreshKeys: Set<string>;
+  appliedRefreshKey: string | undefined;
+}) {
+  return Boolean(
+    params.refreshKey &&
+      params.appliedRefreshKey !== params.refreshKey &&
+      !params.knownRefreshKeys.has(params.refreshKey),
+  );
+}
+
+export function chartDataLimitForHistoryState(params: {
+  chartLimit: number;
+  completedRefreshKey: string | undefined;
+  request: Pick<KlineRequest, 'market' | 'symbol' | 'interval'>;
+}) {
+  return fullHistoryRefreshKeyForRequest(params.completedRefreshKey, params.request)
+    ? undefined
+    : params.chartLimit;
+}
+
+export function chartIndicatorLimitForData(params: {
+  requestLimit: number | undefined;
+  loadedRows: number;
+  maxRows: number;
+}) {
+  const rowsToCalculate = params.requestLimit ?? params.loadedRows;
+
+  if (rowsToCalculate > params.maxRows) {
+    return 0;
+  }
+
+  return params.requestLimit;
+}
+
+function fullHistoryRefreshKeyForRequest(
+  completedRefreshKey: string | undefined,
+  request: Pick<KlineRequest, 'market' | 'symbol' | 'interval'>,
+) {
+  if (!completedRefreshKey) {
+    return false;
+  }
+
+  return completedRefreshKey.startsWith(`${taskScopeKey(request.market, request.symbol, request.interval)}:`);
+}
+
 export function shouldRetryEmptyKlineLoad(params: {
   data: ChartDataResponse | undefined;
   loading: boolean;
@@ -1764,6 +2148,18 @@ async function prefetchChartData(requests: KlineRequest[]) {
   for (const request of requests) {
     await getChartData(request);
   }
+}
+
+function scheduleLowPriorityWork(callback: () => void) {
+  if ('requestIdleCallback' in window) {
+    const idleCallback = window.requestIdleCallback(callback, { timeout: 5_000 });
+
+    return () => window.cancelIdleCallback(idleCallback);
+  }
+
+  const timeout = setTimeout(callback, 2_500);
+
+  return () => clearTimeout(timeout);
 }
 
 function chartDataResetKey(request: KlineRequest) {

@@ -1,60 +1,73 @@
-# v0.1.0-tauri Release, Migration And Rollback Plan
+# v0.1.0-tauri Release Plan
 
 ## Release Target
 
-`v0.1.0-tauri` is a prerelease for the Tauri/Rust performance rewrite. It should be packaged for local desktop verification before it is considered a replacement for the old Electron/Web architecture.
+`v0.1.0-tauri` is a desktop prerelease for the high-performance KLineForge app. Package it for local desktop verification before treating it as a release candidate.
 
-## Migration Notes
+## Required Local Verification
 
-Old IndexedDB, localStorage and old config import compatibility are intentionally out of scope. The Tauri prerelease starts from a new SQLite database.
+```bash
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+npm run rust:fmt
+npm run rust:clippy
+npm run rust:test
+npm run tauri:build
+```
 
-Users who need old IndexedDB/localStorage settings should keep using the `main` branch build. New-schema JSON import/export exists for the Tauri SQLite app, but it does not read the old config envelope.
+Recommended data checks:
+
+```bash
+npm run prepare:chart-dataset:100k
+npm run verify:market-data
+npm run verify:render -- http://127.0.0.1:4173/
+npm run verify:large-chart:100k
+```
+
+For browser verification, build and start preview first:
+
+```bash
+npm run build
+npm run preview -- --port 4173
+```
 
 ## Packaging
 
-Expected command:
+Build the release binary:
 
 ```bash
 npm run tauri:build
 ```
 
-`npm run tauri:build` validates the release desktop binary with `tauri build --no-bundle`. Use this command in local verification and CI.
-
-Full Linux bundling command:
+Build the configured bundle:
 
 ```bash
 npm run tauri:bundle
 ```
 
-The configured bundle target is AppImage on Linux. On the current Arch-based development machine, the Tauri AppImage step can fail inside `linuxdeploy` because its bundled `strip` does not understand newer system libraries with `.relr.dyn` sections. The release binary still builds successfully at `src-tauri/target/release/klineforge`. Produce AppImage artifacts from an Ubuntu-based CI runner or another linuxdeploy-compatible environment until the AppImage toolchain handles these libraries.
+The binary is written to:
 
-## Rollback
+```text
+src-tauri/target/release/klineforge
+```
 
-Do not merge this branch into `main` until the verification section in the saved Goal file passes or the completion standard is explicitly changed.
+On some rolling-release Linux hosts, AppImage bundling can fail because the external packaging toolchain may not understand newer system library sections. Use Ubuntu or CI for AppImage artifacts if local bundling fails.
 
-Rollback path:
+## Release Evidence
 
-1. Switch back to `main`.
-2. Use the existing Electron/Web build and docs.
-3. Ignore the new SQLite app data created by the Tauri prerelease.
+Attach or preserve:
 
-## Known First-Stage Degradations
+1. Full local verification command output.
+2. Tauri release binary path.
+3. 100k chart dataset benchmark JSON under `artifacts/performance/`.
+4. Render and large-chart verification outputs when generated.
+5. Notes for any external Binance access failure, including HTTP status and whether archive verification passed.
 
-1. Drawing creation/loading/deletion now covers horizontal line, trend line, vertical line, rectangle, text and measurement annotations, but drag/edit handles, style editing, lock/hide and undo/redo remain pending.
-2. Indicator display now covers Volume, MA, EMA, BOLL, MACD, RSI, ATR, KDJ and Supertrend; full per-chart parameter/style editing is still pending.
-3. 1M chart browsing uses LOD/downsampling and overlay indicators remain best-effort; 100k remains the release-gating full-interaction target.
-4. Full range-completeness cache task queue UI remains degraded; the first-stage UI exposes cache summary plus current-symbol and per cached interval clear actions.
-5. Direct Binance REST/WebSocket smoke can fail in restricted networks, including HTTP 451 responses. Treat that as an external blocker when the Public Data archive verification and local checks pass.
-6. Full Linux AppImage bundling should be produced in Ubuntu/CI because local Arch `linuxdeploy` can fail on `.relr.dyn` sections.
+## Known First-Stage Limits
 
-## Implemented In The Current Slice
-
-1. Binance REST history for Spot/USD-M and Rust-managed WebSocket kline updates.
-2. SQLite K-line cache read/write, summary, clear-current-symbol UI and per cached interval clear action.
-3. CSV export for the current chart request.
-4. New-schema JSON config export/import for settings, watchlist and drawings.
-5. Core drawing persistence and rendering for horizontal lines, trend lines, vertical lines, rectangles, text labels and measurements.
-6. Time-linked crosshair/visible-range synchronization between the two chart panes.
-7. Rust-backed 24h market info, USD-M mark/index/funding data and compact symbol search/leaderboards.
-8. Watchlist add/remove/reorder, chart PNG export and Volume/MA/EMA/BOLL/MACD/RSI/ATR/KDJ/Supertrend calculation/rendering.
-9. Real Binance Public Data chart evidence for 100k full interaction and 1M LOD basic browsing.
+1. Drawing creation/loading/deletion covers the core annotation types; richer edit handles and undo/redo remain future work.
+2. Indicator display covers Volume, MA, EMA, BOLL, MACD, RSI, ATR, KDJ and Supertrend; 1M overlay indicators are best effort.
+3. Full range-completeness cache task UI remains future work.
+4. Direct Binance REST/WebSocket smoke can fail in restricted networks. Treat that as external when archive verification and local checks pass.

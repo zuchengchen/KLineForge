@@ -193,7 +193,6 @@ pub fn calculate_indicator_series(
                         .map(|value| value.map(|(_, _, histogram)| histogram))
                         .collect(),
                     points,
-                    true,
                 );
             }
             IndicatorParams::Rsi { period } => push_line_series(
@@ -308,14 +307,16 @@ fn push_line_series(
 ) {
     push_numeric_series(
         series,
-        instance,
-        key,
-        label,
-        IndicatorSeriesType::Line,
-        pane,
-        values,
-        points,
-        false,
+        SeriesSpec {
+            instance,
+            key,
+            label,
+            series_type: IndicatorSeriesType::Line,
+            pane,
+            values,
+            points,
+            color_by_sign: false,
+        },
     );
 }
 
@@ -339,53 +340,56 @@ fn push_histogram_series(
     pane: u8,
     values: Vec<Option<f64>>,
     points: &[ChartPoint],
-    color_by_sign: bool,
 ) {
     push_numeric_series(
         series,
-        instance,
-        key,
-        label,
-        IndicatorSeriesType::Histogram,
-        pane,
-        values,
-        points,
-        color_by_sign,
+        SeriesSpec {
+            instance,
+            key,
+            label,
+            series_type: IndicatorSeriesType::Histogram,
+            pane,
+            values,
+            points,
+            color_by_sign: true,
+        },
     );
 }
 
-fn push_numeric_series(
-    series: &mut Vec<IndicatorSeries>,
-    instance: &IndicatorInstance,
-    key: &str,
-    label: &str,
+struct SeriesSpec<'a> {
+    instance: &'a IndicatorInstance,
+    key: &'a str,
+    label: &'a str,
     series_type: IndicatorSeriesType,
     pane: u8,
     values: Vec<Option<f64>>,
-    points: &[ChartPoint],
+    points: &'a [ChartPoint],
     color_by_sign: bool,
-) {
-    let Some(style) = instance.styles.get(key).cloned() else {
+}
+
+fn push_numeric_series(series: &mut Vec<IndicatorSeries>, spec: SeriesSpec<'_>) {
+    let Some(style) = spec.instance.styles.get(spec.key).cloned() else {
         return;
     };
 
     series.push(IndicatorSeries {
-        id: format!("{}:{key}", instance.id),
-        instance_id: instance.id.clone(),
-        key: key.to_string(),
-        label: label.to_string(),
-        series_type,
-        pane,
+        id: format!("{}:{}", spec.instance.id, spec.key),
+        instance_id: spec.instance.id.clone(),
+        key: spec.key.to_string(),
+        label: spec.label.to_string(),
+        series_type: spec.series_type,
+        pane: spec.pane,
         price_scale_id: None,
         style,
-        data: points
+        data: spec
+            .points
             .iter()
-            .zip(values.iter())
+            .zip(spec.values.iter())
             .filter_map(|(point, value)| {
                 value.map(|value| IndicatorSeriesPoint {
                     time: point.time,
                     value,
-                    color: color_by_sign.then(|| {
+                    color: spec.color_by_sign.then(|| {
                         if value >= 0.0 {
                             "#22ab9466".to_string()
                         } else {

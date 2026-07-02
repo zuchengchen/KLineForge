@@ -1,4 +1,6 @@
-use reqwest::Client;
+use std::io::{Cursor, Read};
+
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use url::Url;
@@ -9,7 +11,7 @@ use crate::{
         FuturesMarketInfo, Kline, KlineRequest, LeaderboardEntry, Leaderboards, LiveStreamRequest,
         Market, MarketInfoSnapshot, SymbolSummary, Ticker24h, interval_ms,
     },
-    error::AppResult,
+    error::{AppError, AppResult},
 };
 
 #[derive(Clone)]
@@ -60,6 +62,54 @@ impl BinanceClient {
                 normalize_kline(request.market, &request.symbol, &request.interval, row).ok()
             })
             .collect())
+    }
+
+    pub async fn get_monthly_archive_klines(
+        &self,
+        request: &KlineRequest,
+        year: i32,
+        month: u32,
+    ) -> AppResult<Option<Vec<Kline>>> {
+        let url = archive_url(
+            request.market,
+            &request.symbol,
+            &request.interval,
+            year,
+            month,
+        );
+        let response = self.http.get(url).send().await?;
+
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let bytes = response.error_for_status()?.bytes().await?;
+        parse_archive_zip(request, &bytes).map(Some)
+    }
+
+    pub async fn archive_month_exists(
+        &self,
+        request: &KlineRequest,
+        year: i32,
+        month: u32,
+    ) -> AppResult<bool> {
+        let url = archive_url(
+            request.market,
+            &request.symbol,
+            &request.interval,
+            year,
+            month,
+        );
+        let response = self.http.head(url).send().await?;
+
+        match response.status() {
+            StatusCode::OK => Ok(true),
+            StatusCode::NOT_FOUND => Ok(false),
+            _ => {
+                response.error_for_status()?;
+                Ok(true)
+            }
+        }
     }
 
     pub async fn get_symbols(&self, market: Market) -> AppResult<Vec<SymbolSummary>> {
@@ -491,6 +541,85 @@ fn binance_interval(interval: &str) -> String {
     }
 }
 
+pub fn archive_url(market: Market, symbol: &str, interval: &str, year: i32, month: u32) -> String {
+    let symbol = symbol.to_uppercase();
+    let scope = match market {
+        Market::Spot => "spot",
+        Market::UsdM => "futures/um",
+    };
+
+    format!(
+        "https://data.binance.vision/data/{scope}/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month:02}.zip"
+    )
+}
+
+fn parse_archive_zip(request: &KlineRequest, bytes: &[u8]) -> AppResult<Vec<Kline>> {
+    let reader = Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|error| AppError::Message(format!("failed to read archive zip: {error}")))?;
+    let mut rows = Vec::new();
+
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|error| AppError::Message(format!("failed to read archive file: {error}")))?;
+
+        if !file.name().ends_with(".csv") {
+            continue;
+        }
+
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        rows.extend(parse_archive_csv(request, &content));
+    }
+
+    rows.sort_by_key(|row| row.open_time);
+    rows.dedup_by_key(|row| row.open_time);
+
+    Ok(rows)
+}
+
+fn parse_archive_csv(request: &KlineRequest, content: &str) -> Vec<Kline> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let columns: Vec<&str> = line.split(',').collect();
+
+            if columns.len() < 11 || columns[0] == "open_time" {
+                return None;
+            }
+
+            Some(Kline {
+                market: request.market.as_str().to_string(),
+                symbol: request.symbol.to_uppercase(),
+                interval: request.interval.clone(),
+                open_time: normalize_archive_timestamp(columns[0].parse().ok()?),
+                open: columns[1].to_string(),
+                high: columns[2].to_string(),
+                low: columns[3].to_string(),
+                close: columns[4].to_string(),
+                volume: columns[5].to_string(),
+                close_time: normalize_archive_timestamp(columns[6].parse().ok()?),
+                quote_volume: columns[7].to_string(),
+                trade_count: columns[8].parse().unwrap_or_default(),
+                taker_buy_base_volume: columns[9].to_string(),
+                taker_buy_quote_volume: columns[10].to_string(),
+                is_closed: true,
+                source: "binance-public-data".to_string(),
+                updated_at: now_ms(),
+            })
+        })
+        .collect()
+}
+
+fn normalize_archive_timestamp(value: i64) -> i64 {
+    if value > 100_000_000_000_000 {
+        value / 1_000
+    } else {
+        value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -527,6 +656,26 @@ mod tests {
         assert_eq!(binance_interval("1M"), "1M");
         assert_eq!(binance_interval("3m"), "3m");
         assert_eq!(binance_interval("2h"), "2h");
+    }
+
+    #[test]
+    fn builds_monthly_archive_url() {
+        assert_eq!(
+            archive_url(Market::UsdM, "btcusdt", "1h", 2026, 5),
+            "https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/1h/BTCUSDT-1h-2026-05.zip"
+        );
+    }
+
+    #[test]
+    fn normalizes_microsecond_archive_timestamps() {
+        assert_eq!(
+            normalize_archive_timestamp(1_735_689_600_000_000),
+            1_735_689_600_000
+        );
+        assert_eq!(
+            normalize_archive_timestamp(1_735_689_600_000),
+            1_735_689_600_000
+        );
     }
 
     #[test]

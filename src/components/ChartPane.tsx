@@ -13,7 +13,8 @@ import {
   type Time,
 } from 'lightweight-charts';
 import { createEffect, onCleanup, type Accessor } from 'solid-js';
-import type { ChartPoint, DrawingObject, IndicatorInstance, IndicatorSeries } from '../services/types';
+import type { ChartId, ChartPoint, DrawingObject, IndicatorInstance, IndicatorSeries } from '../services/types';
+import { tauriResizeEventNameForTests } from '../services/tauriWindowResize';
 
 export interface ChartPaneMetrics {
   inputRows: number;
@@ -25,6 +26,7 @@ export interface ChartPaneMetrics {
 }
 
 interface ChartPaneProps {
+  chartId: ChartId;
   title: string;
   points: Accessor<ChartPoint[]>;
   indicators: Accessor<IndicatorSeries[]>;
@@ -33,11 +35,11 @@ interface ChartPaneProps {
   drawings: Accessor<DrawingObject[]>;
   liveStatus: Accessor<{ source: string; isClosed: boolean; time: number } | undefined>;
   resetKey?: Accessor<string>;
+  fitKey?: Accessor<string>;
+  fitNextDataKey?: Accessor<string>;
   theme: Accessor<string>;
   syncCrosshair?: Accessor<{ time: number; price: number } | null>;
-  syncRange?: Accessor<LogicalRange | null>;
   onCrosshairMove?: (point: { time: number; price: number } | null) => void;
-  onVisibleRangeChange?: (range: LogicalRange | null) => void;
   onReady?: (actions: { exportPng: () => string }) => void;
   onPerformanceUpdate?: (metrics: ChartPaneMetrics) => void;
 }
@@ -46,26 +48,80 @@ export function ChartPane(props: ChartPaneProps) {
   const containerRef: { current?: HTMLDivElement } = {};
   let chart: IChartApi | undefined;
   let candleSeries: ISeriesApi<'Candlestick'> | undefined;
-  let applyingExternalRange = false;
-  let externalRangeUnlockFrame: number | undefined;
-  let externalRangeUnlockFollowupFrame: number | undefined;
   let latestResetKey: string | undefined;
+  let latestFitKey: string | undefined;
+  let latestFitNextDataKey: string | undefined;
   let shouldFitNextData = true;
   let previousInputPoints: ChartPoint[] | undefined;
+  let currentRenderedRows = 0;
   let currentLodApplied = false;
+  let lastAppliedCrosshair: { time: number; price: number } | null = null;
+  let fitContentFrame: number | undefined;
+  let resizeObserver: ResizeObserver | undefined;
   const priceLines = new Map<string, IPriceLine>();
   const drawingSeries = new Map<string, ISeriesApi<'Line'>>();
   const indicatorSeriesMap = new Map<string, ISeriesApi<'Line'> | ISeriesApi<'Histogram'>>();
 
-  const resize = () => {
+  const applyChartSize = () => {
     if (!containerRef.current || !chart) {
-      return;
+      return false;
     }
 
     chart.applyOptions({
       height: containerRef.current.clientHeight,
       width: containerRef.current.clientWidth,
     });
+
+    return true;
+  };
+
+  const cancelScheduledFit = () => {
+    if (fitContentFrame === undefined) {
+      return;
+    }
+
+    window.cancelAnimationFrame(fitContentFrame);
+    fitContentFrame = undefined;
+  };
+
+  const scheduleFitChartContent = () => {
+    if (!chart || !shouldFitChartAfterResize({ renderedRows: currentRenderedRows })) {
+      return false;
+    }
+
+    cancelScheduledFit();
+
+    fitContentFrame = window.requestAnimationFrame(() => {
+      fitContentFrame = undefined;
+      if (!chart || !shouldFitChartAfterResize({ renderedRows: currentRenderedRows })) {
+        return;
+      }
+
+      applyChartSize();
+      chart.timeScale().fitContent();
+    });
+
+    return true;
+  };
+
+  const fitChartContent = () => {
+    if (!chart || !shouldFitChartAfterResize({ renderedRows: currentRenderedRows })) {
+      return false;
+    }
+
+    applyChartSize();
+    chart.timeScale().fitContent();
+    scheduleFitChartContent();
+
+    return true;
+  };
+
+  const resize = () => {
+    if (!applyChartSize()) {
+      return;
+    }
+
+    scheduleFitChartContent();
   };
 
   createEffect(() => {
@@ -75,9 +131,17 @@ export function ChartPane(props: ChartPaneProps) {
 
     chart = createChart(containerRef.current, {
       autoSize: false,
+      handleScale: {
+        mouseWheel: true,
+      },
+      handleScroll: {
+        mouseWheel: false,
+        vertTouchDrag: false,
+      },
       layout: {
         background: { type: ColorType.Solid, color: props.theme() === 'light' ? '#f7f8fb' : '#101318' },
         textColor: props.theme() === 'light' ? '#1f2937' : '#d6dde8',
+        attributionLogo: false,
       },
       grid: {
         horzLines: { color: props.theme() === 'light' ? '#e3e7ef' : '#242a35' },
@@ -120,18 +184,20 @@ export function ChartPane(props: ChartPaneProps) {
       const price = row && 'close' in row ? row.close : undefined;
       props.onCrosshairMove(typeof price === 'number' ? { time: param.time as number, price } : null);
     });
-    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (applyingExternalRange) {
-        return;
-      }
-
-      props.onVisibleRangeChange?.(range);
-    });
     props.onReady?.({
       exportPng: () => chart?.takeScreenshot(true, true).toDataURL('image/png') ?? '',
     });
+    registerChartDebugHandle(props.chartId, {
+      getVisibleLogicalRange: () => chart?.timeScale().getVisibleLogicalRange() ?? null,
+      getLastAppliedCrosshair: () => lastAppliedCrosshair,
+    });
     resize();
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(resize);
+      resizeObserver.observe(containerRef.current);
+    }
     window.addEventListener('resize', resize);
+    window.addEventListener(tauriResizeEventNameForTests(), resize);
   });
 
   createEffect(() => {
@@ -139,6 +205,27 @@ export function ChartPane(props: ChartPaneProps) {
 
     if (nextResetKey !== latestResetKey) {
       latestResetKey = nextResetKey;
+      shouldFitNextData = true;
+    }
+  });
+
+  createEffect(() => {
+    const nextFitKey = props.fitKey?.();
+
+    if (nextFitKey !== latestFitKey) {
+      latestFitKey = nextFitKey;
+
+      if (!fitChartContent()) {
+        shouldFitNextData = true;
+      }
+    }
+  });
+
+  createEffect(() => {
+    const nextFitNextDataKey = props.fitNextDataKey?.();
+
+    if (nextFitNextDataKey !== latestFitNextDataKey) {
+      latestFitNextDataKey = nextFitNextDataKey;
       shouldFitNextData = true;
     }
   });
@@ -175,6 +262,7 @@ export function ChartPane(props: ChartPaneProps) {
     });
 
     currentLodApplied = renderData.lodApplied;
+    currentRenderedRows = renderedPoints.length;
     previousInputPoints = points;
 
     candleSeries?.setData(
@@ -190,8 +278,9 @@ export function ChartPane(props: ChartPaneProps) {
 
     if (renderedPoints.length > 0) {
       if (shouldFitContent) {
-        chart?.timeScale().fitContent();
-        shouldFitNextData = false;
+        if (fitChartContent()) {
+          shouldFitNextData = false;
+        }
       }
     }
 
@@ -264,32 +353,21 @@ export function ChartPane(props: ChartPaneProps) {
     }
 
     if (!crosshair) {
+      lastAppliedCrosshair = null;
       chart.clearCrosshairPosition();
       return;
     }
 
+    lastAppliedCrosshair = crosshair;
     chart.setCrosshairPosition(crosshair.price, crosshair.time as Time, candleSeries);
   });
 
-  createEffect(() => {
-    const range = props.syncRange?.();
-
-    if (!chart || !range) {
-      return;
-    }
-
-    if (areLogicalRangesEqual(chart.timeScale().getVisibleLogicalRange(), range)) {
-      return;
-    }
-
-    applyingExternalRange = true;
-    chart.timeScale().setVisibleLogicalRange(range);
-    scheduleExternalRangeUnlock();
-  });
-
   onCleanup(() => {
+    cancelScheduledFit();
     window.removeEventListener('resize', resize);
-    cancelExternalRangeUnlock();
+    window.removeEventListener(tauriResizeEventNameForTests(), resize);
+    resizeObserver?.disconnect();
+    unregisterChartDebugHandle(props.chartId);
     if (candleSeries) {
       for (const line of priceLines.values()) {
         candleSeries.removePriceLine(line);
@@ -309,29 +387,6 @@ export function ChartPane(props: ChartPaneProps) {
     chart?.remove();
     chart = undefined;
   });
-
-  function cancelExternalRangeUnlock() {
-    if (externalRangeUnlockFrame !== undefined) {
-      window.cancelAnimationFrame(externalRangeUnlockFrame);
-      externalRangeUnlockFrame = undefined;
-    }
-
-    if (externalRangeUnlockFollowupFrame !== undefined) {
-      window.cancelAnimationFrame(externalRangeUnlockFollowupFrame);
-      externalRangeUnlockFollowupFrame = undefined;
-    }
-  }
-
-  function scheduleExternalRangeUnlock() {
-    cancelExternalRangeUnlock();
-    externalRangeUnlockFrame = window.requestAnimationFrame(() => {
-      externalRangeUnlockFrame = undefined;
-      externalRangeUnlockFollowupFrame = window.requestAnimationFrame(() => {
-        externalRangeUnlockFollowupFrame = undefined;
-        applyingExternalRange = false;
-      });
-    });
-  }
 
   return (
     <section class="chart-pane">
@@ -572,16 +627,35 @@ export function shouldAutoFitChartData(params: {
   return !params.hasPreviousData || (params.pendingReset && params.dataReferenceChanged);
 }
 
-export function areLogicalRangesEqual(
-  first: LogicalRange | null | undefined,
-  second: LogicalRange | null | undefined,
-  tolerance = 0.0001,
-) {
-  if (!first || !second) {
-    return first === second;
+export function shouldFitChartAfterResize(params: { renderedRows: number }) {
+  return params.renderedRows > 0;
+}
+
+type ChartDebugHandle = {
+  getVisibleLogicalRange: () => LogicalRange | null;
+  getLastAppliedCrosshair: () => { time: number; price: number } | null;
+};
+
+type ChartDebugWindow = Window & {
+  __KLINEFORGE_CHART_DEBUG__?: Partial<Record<ChartId, ChartDebugHandle>>;
+};
+
+function registerChartDebugHandle(chartId: ChartId, handle: ChartDebugHandle) {
+  if (typeof window === 'undefined') {
+    return;
   }
 
-  return Math.abs(first.from - second.from) <= tolerance && Math.abs(first.to - second.to) <= tolerance;
+  const debugWindow = window as ChartDebugWindow;
+  debugWindow.__KLINEFORGE_CHART_DEBUG__ ??= {};
+  debugWindow.__KLINEFORGE_CHART_DEBUG__[chartId] = handle;
+}
+
+function unregisterChartDebugHandle(chartId: ChartId) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  delete (window as ChartDebugWindow).__KLINEFORGE_CHART_DEBUG__?.[chartId];
 }
 
 function createRenderablePoints(points: ChartPoint[]) {

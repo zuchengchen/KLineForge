@@ -19,6 +19,10 @@ path = "src/bin/benchmark.rs"
 name = "klineforge-market-smoke"
 path = "src/bin/market_smoke.rs"
 
+[[bin]]
+name = "klineforge-full-history"
+path = "src/bin/full_history.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.5.1", features = [] }
 
@@ -34,8 +38,6 @@ sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "sqlite", "chron
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = "2.4.1"
 tauri-plugin-fs = "2.4.4"
-tauri-plugin-opener = "2.5.0"
-tauri-plugin-shell = "2.3.1"
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "time"] }
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }

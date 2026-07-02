@@ -6,11 +6,9 @@ export default tseslint.config(
   {
     ignores: [
       'dist',
-      'dist-electron',
       'release',
       'target',
       'src-tauri/target',
-      'legacy-src',
       'artifacts/performance/*.json',
     ],
   },
@@ -30,6 +28,7 @@ export default tseslint.config(
       globals: {
         ...globals.node,
         document: 'readonly',
+        HTMLElement: 'readonly',
       },
     },
   },
